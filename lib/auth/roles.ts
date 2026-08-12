@@ -1,0 +1,38 @@
+export type UserRole = "ADMIN" | "DEPOT_MANAGER" | "LOGISTICS" | "DIRECTION";
+
+export const ROLES = {
+  ADMIN: "ADMIN" as const,
+  DEPOT_MANAGER: "DEPOT_MANAGER" as const,
+  LOGISTICS: "LOGISTICS" as const,
+  DIRECTION: "DIRECTION" as const,
+};
+
+export type Permission =
+  | "PREPARE"
+  | "COUNT"
+  | "SYNC"
+  | "CLOSE"
+  | "EXPORT"
+  | "CANCEL_SESSION"
+  | "MANAGE_USERS"
+  | "MANAGE_DEPOTS"
+  | "VIEW_AUDIT"
+  | "VIEW_RESULTS";
+
+export const PERMISSION_MATRIX: Record<Permission, UserRole[]> = {
+  PREPARE: [ROLES.ADMIN, ROLES.DEPOT_MANAGER],
+  COUNT: [ROLES.ADMIN, ROLES.DEPOT_MANAGER, ROLES.LOGISTICS],
+  SYNC: [ROLES.ADMIN, ROLES.DEPOT_MANAGER, ROLES.LOGISTICS],
+  CLOSE: [ROLES.ADMIN, ROLES.DEPOT_MANAGER],
+  EXPORT: [ROLES.ADMIN, ROLES.DEPOT_MANAGER, ROLES.DIRECTION],
+  CANCEL_SESSION: [ROLES.ADMIN],
+  MANAGE_USERS: [ROLES.ADMIN],
+  MANAGE_DEPOTS: [ROLES.ADMIN],
+  VIEW_AUDIT: [ROLES.ADMIN],
+  VIEW_RESULTS: [ROLES.ADMIN, ROLES.DEPOT_MANAGER, ROLES.DIRECTION, ROLES.LOGISTICS],
+};
+
+export function isAuthorized(role: UserRole | undefined, permission: Permission) {
+  if (!role) return false;
+  return PERMISSION_MATRIX[permission].includes(role);
+}

@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  DEPOT_MANAGER
+  LOGISTICS
+  DIRECTION
+}
+
+enum SessionStatus {
+  PREPARED
+  SYNCED
+  CLOSED
+  CANCELLED
+}
+
+model User {
+  id           String        @id @default(cuid())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  email        String        @unique
+  name         String?
+  passwordHash String
+  role         UserRole
+  disabledAt   DateTime?
+  sessions     InventorySession[] @relation("createdBy")
+  auditEvents  AuditLog[]
+}
+
+model Depot {
+  id         String             @id @default(cuid())
+  code       String             @unique
+  name       String
+  disabledAt DateTime?
+  sessions   InventorySession[]
+}
+
+model InventorySession {
+  id               String         @id @default(cuid())
+  depot            Depot          @relation(fields: [depotId], references: [id])
+  depotId          String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  preparedBy       User?          @relation("createdBy", fields: [preparedById], references: [id])
+  preparedById     String?
+  status           SessionStatus  @default(PREPARED)
+  theoreticalSnapshot Json
+  lines            InventoryLine[]
+  auditLogs        AuditLog[]
+  syncedAt         DateTime?
+  closedAt         DateTime?
+  cancelledAt      DateTime?
+}
+
+model InventoryLine {
+  id             String   @id @default(cuid())
+  session        InventorySession @relation(fields: [sessionId], references: [id])
+  sessionId      String
+  articleRef     String
+  designation    String?
+  theoreticalQty Int
+  countedQty     Int?
+  isOffReferential Boolean @default(false)
+  lastUpdatedAt  DateTime @updatedAt
+
+  @@unique([sessionId, articleRef])
+}
+
+// APPEND-ONLY (FR-032), enforced at two independent levels:
+//
+// 1. Application level: every write path in this codebase calls only
+//    `prisma.auditLog.create` — never `.update`/`.delete`/`.upsert`. That is
+//    a grep-verifiable invariant today
+//    (`grep -rn "auditLog\.\(update\|delete\|upsert\)" app lib` returns
+//    nothing).
+// 2. Database level: migration 20260723095800_hardening_auditlog_immutable_role
+//    creates a "sqp_app" Postgres role with SELECT/INSERT/UPDATE/DELETE on
+//    every table EXCEPT AuditLog, where UPDATE/DELETE are explicitly
+//    revoked. Production's DATABASE_URL is meant to authenticate as sqp_app
+//    (see the deployment checklist in
+//    specs/001-module-inventaire-sqp-impression-uv/quickstart.md) — an app
+//    connecting with that role physically cannot mutate/remove an existing
+//    entry, regardless of what the application code does (compromised
+//    dependency, SQL injection, a future regression in rule #1, etc).
+//
+// This is a REVOKE, not a BEFORE UPDATE/DELETE trigger with an
+// environment-conditional bypass, specifically so that nothing about local
+// dev, CI, or any Vitest file needs to change: they all keep connecting
+// with the existing superuser-ish role (the current DATABASE_URL) and keep
+// using deleteMany/etc. for fixture teardown exactly as before. The
+// restriction only ever bites a connection that's actually authenticating
+// as sqp_app, which local/test tooling never does.
+model AuditLog {
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
+  actor     User?     @relation(fields: [actorId], references: [id])
+  actorId   String?
+  action    String
+  details   Json?
+  session   InventorySession? @relation(fields: [sessionId], references: [id])
+  sessionId String?
+}
