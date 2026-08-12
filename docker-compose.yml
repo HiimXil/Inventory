@@ -1,0 +1,76 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-sqp_inventaire}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-sqp_inventaire}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Runtime connection (FR-032): the sqp_app role, never the superuser —
+      # cannot UPDATE/DELETE AuditLog even if the app code or a dependency
+      # were compromised. See DEPLOY.md.
+      DATABASE_URL: postgresql://sqp_app:${SQP_APP_PASSWORD}@db:5432/${POSTGRES_DB:-sqp_inventaire}
+      # Privileged connection, entrypoint-only (migrate deploy, ALTER ROLE,
+      # initial seed) — never used by the running Next.js server.
+      MIGRATE_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sqp_inventaire}
+      SQP_APP_PASSWORD: ${SQP_APP_PASSWORD}
+      # Public HTTPS URL served by Nginx Proxy Manager — NOT the internal
+      # Docker service name/port. Auth.js signs cookies against this origin;
+      # getting it wrong breaks login and the service worker registration.
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      ARTIS_MODE: ${ARTIS_MODE:-file}
+      ARTIS_FIXTURE: ${ARTIS_FIXTURE:-normal}
+      RGPD_RETENTION_MONTHS: ${RGPD_RETENTION_MONTHS:-24}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+      - proxy
+    # No host port published on purpose — Nginx Proxy Manager reaches this
+    # container by service name ("app") on the shared `proxy` network; see
+    # DEPLOY.md for the NPM proxy-host configuration. `expose` only
+    # documents the port to other containers, it does not publish anything
+    # on the host.
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  internal:
+    driver: bridge
+  # Pre-existing network shared with Nginx Proxy Manager — created once
+  # (e.g. `docker network create proxy`) and referenced here by name, not
+  # created by this stack. Rename via NPM_NETWORK_NAME if NPM's network is
+  # called something else. See DEPLOY.md §"Réseau partagé avec NPM".
+  proxy:
+    external: true
+    name: ${NPM_NETWORK_NAME:-npm_proxy}
+
+volumes:
+  db_data:

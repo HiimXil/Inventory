@@ -74,6 +74,10 @@ npm run lint
 
 Un script de purge (`npm run purge:rgpd`) supprime les sessions/lignes/entrées d'audit au-delà d'une fenêtre de rétention configurable (`RGPD_RETENTION_MONTHS`, 24 mois par défaut). Détails et fréquence recommandée : [`quickstart.md` §3](./specs/001-module-inventaire-sqp-impression-uv/quickstart.md).
 
+## Déploiement
+
+Image Docker multi-stage (`Dockerfile`) + `docker-compose.yml` pour une stack Portainer (app + PostgreSQL) derrière Nginx Proxy Manager. Étapes Portainer/NPM, variables de stack, et checklist post-déploiement (dont la vérification du rôle `sqp_app`, FR-032) : voir [`DEPLOY.md`](./DEPLOY.md).
+
 ## Licence
 
 Non définie.

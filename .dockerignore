@@ -1,0 +1,44 @@
+# dependencies (reinstalled in-image)
+node_modules
+
+# build output (regenerated in-image)
+.next
+out
+build
+
+# env files — never bake secrets into an image layer
+.env
+.env.*
+!.env.example
+
+# git
+.git
+.gitignore
+
+# tests — not needed to build or run the app
+tests
+test-results
+playwright-report
+coverage
+playwright.config.ts
+playwright.offline.config.ts
+playwright.file-import.config.ts
+vitest.config.ts
+
+# editor/OS
+.DS_Store
+.vscode
+.idea
+
+# docs / spec-kit tooling — irrelevant to the running app
+*.md
+!README.md
+specs
+.claude
+.specify
+
+# Docker itself
+Dockerfile
+.dockerignore
+docker-compose.yml
+DEPLOY.md
