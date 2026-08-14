@@ -24,9 +24,9 @@ async function scan(page: Page, articleRef: string) {
   await manualInput.press("Enter");
 }
 
-/** The row's quantity cell is a tap target (opens/reopens the panel), not an editable input — see CountingTable. */
+/** Reads the displayed counted quantity for a row — the whole row (not just this cell) is the tap target that opens/reopens the panel, see CountingTable. */
 function countedCell(row: Locator): Locator {
-  return row.getByRole("button", { name: /modifier la quantité comptée/i });
+  return row.getByTestId(/^counted-/);
 }
 
 test.describe("US2 — offline counting (production build)", () => {
@@ -205,5 +205,116 @@ test.describe("US2 — offline counting (production build)", () => {
     await expect(feedback).toHaveAttribute("data-scan-status", "off-referential");
     await expect(feedback).toContainText(/hors référentiel/i);
     await expect(feedback).toContainText(/compté : 1/i);
+  });
+});
+
+test.describe("US2 — tap a row to count without scanning (CountingTable, offline)", () => {
+  let sessionId: string;
+
+  test.beforeAll(async () => {
+    const depot = await prisma.depot.upsert({
+      where: { code: `${DEPOT.code}-TAP` },
+      update: {},
+      create: { code: `${DEPOT.code}-TAP`, name: "E2E Offline Tap Depot" },
+    });
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
+    process.env.ARTIS_MODE = "mock";
+    process.env.ARTIS_FIXTURE = "normal";
+    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, logistics.id);
+    if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
+    sessionId = outcome.sessionId;
+  });
+
+  test.afterAll(async () => {
+    const depot = await prisma.depot.findUniqueOrThrow({ where: { code: `${DEPOT.code}-TAP` } });
+    await prisma.auditLog.deleteMany({ where: { sessionId } });
+    await prisma.inventoryLine.deleteMany({ where: { sessionId } });
+    await prisma.inventorySession.deleteMany({ where: { id: sessionId } });
+    await prisma.depot.delete({ where: { id: depot.id } });
+    await prisma.$disconnect();
+  });
+
+  async function goOfflineOnCountScreen(page: Page, context: import("@playwright/test").BrowserContext) {
+    await loginAs(page, "logistics@example.com", SEED_PASSWORD);
+    await page.goto(`/sessions/${sessionId}/count`);
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+  }
+
+  test("tapping a never-counted row opens the panel in total mode (no QR needed)", async ({ page, context }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    const row = page.locator('tr[data-article-ref="ART-001"]');
+    const panel = page.getByTestId("quantity-entry-panel");
+
+    await row.click();
+
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("data-panel-mode", "total");
+    await expect(panel).toContainText("ART-001");
+  });
+
+  test("tapping the row produces the exact same result as scanning it — same underlying handler", async ({
+    page,
+    context,
+  }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    const row = page.locator('tr[data-article-ref="ART-002"]');
+    const total = page.getByTestId("total-counted");
+
+    // First tap: total mode, confirm 7.
+    await row.click();
+    await expect(page.getByTestId("quantity-entry-panel")).toHaveAttribute("data-panel-mode", "total");
+    await page.getByTestId("qty-total-input").fill("7");
+    await page.getByRole("button", { name: "Valider" }).click();
+    await expect(countedCell(row)).toHaveText("7");
+    await expect(total).toHaveText("7");
+
+    // Re-tapping an already-counted row opens the SAME panel in delta mode —
+    // exactly what a rescan does (see the scan-based test above asserting
+    // the identical "Déjà compté" / delta behavior for ART-001).
+    await row.click();
+    await expect(page.getByTestId("quantity-entry-panel")).toHaveAttribute("data-panel-mode", "delta");
+    await expect(page.getByTestId("qty-previous")).toHaveText(/Déjà compté : 7/);
+    await page.getByTestId("qty-delta-input").fill("3");
+    await page.getByRole("button", { name: "Valider" }).click();
+    await expect(countedCell(row)).toHaveText("10");
+    await expect(total).toHaveText("10");
+  });
+
+  test("a row still opens the panel by tap after filtering the list down to it", async ({ page, context }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    await page.getByTestId("counting-search-input").fill("ART-003");
+    const row = page.locator('tr[data-article-ref="ART-003"]');
+    await expect(row).toBeVisible();
+    await expect(page.locator('tr[data-article-ref="ART-001"]')).toHaveCount(0);
+
+    await row.click();
+    await expect(page.getByTestId("quantity-entry-panel")).toBeVisible();
+  });
+
+  test("a row is keyboard-reachable, announced as an interactive button, and Enter opens the panel", async ({
+    page,
+    context,
+  }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    const row = page.getByRole("button", { name: /saisir la quantité pour art-001/i });
+    await expect(row).toBeVisible();
+
+    await row.focus();
+    await expect(row).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByTestId("quantity-entry-panel")).toBeVisible();
   });
 });

@@ -36,6 +36,14 @@ export function CheckCircleIcon(props: IconProps) {
   );
 }
 
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <svg {...baseProps(props)}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
 export function AlertTriangleIcon(props: IconProps) {
   return (
     <svg {...baseProps(props)}>

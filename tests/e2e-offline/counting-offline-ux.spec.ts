@@ -84,9 +84,11 @@ test.describe("US2/US3 — counting screen UX: progress, filter, pending sync", 
     await expect(progressBar).toHaveAttribute("aria-valuenow", "2");
     await expect(page.getByText("2 / 3 articles comptés")).toBeVisible();
 
-    // A rescan (delta) on an ALREADY-seen article must not double-count it.
+    // A rescan (delta) on an ALREADY-seen article must not double-count it —
+    // reopened here by tapping the row itself (the whole row is the tap
+    // target, not a sub-element of it).
     const knownRow = page.locator('tr[data-article-ref="ART-001"]');
-    await knownRow.getByRole("button", { name: /modifier la quantité comptée/i }).click();
+    await knownRow.click();
     await page.getByTestId("qty-delta-input").fill("1");
     await page.getByRole("button", { name: "Valider" }).click();
     await expect(progressBar).toHaveAttribute("aria-valuenow", "2");
