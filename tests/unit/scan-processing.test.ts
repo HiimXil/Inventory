@@ -5,6 +5,7 @@ import {
   buildDisplayLines,
   knownArticleRefsOf,
   lineInfoFor,
+  resolveArticleRef,
   totalCountedQty,
   type CountLines,
 } from "../../lib/offline/scan-processing";
@@ -17,11 +18,12 @@ const THEORETICAL_LINES: OfflineTheoreticalLine[] = [
 const KNOWN_REFS = knownArticleRefsOf(THEORETICAL_LINES);
 
 describe("lineInfoFor", () => {
-  it("reports a never-counted known article as previousQty null", () => {
+  it("reports a never-counted known article as previousQty null, theoreticalQty from the snapshot", () => {
     expect(lineInfoFor(THEORETICAL_LINES, {}, "ART-001")).toEqual({
       designation: "Imprimante UV",
       previousQty: null,
       isOffReferential: false,
+      theoreticalQty: 12,
     });
   });
 
@@ -31,14 +33,16 @@ describe("lineInfoFor", () => {
       designation: "Imprimante UV",
       previousQty: 0,
       isOffReferential: false,
+      theoreticalQty: 12,
     });
   });
 
-  it("flags an unknown reference as off-referential with no designation", () => {
+  it("flags an unknown reference as off-referential with no designation and theoreticalQty 0", () => {
     expect(lineInfoFor(THEORETICAL_LINES, {}, "UNKNOWN-XYZ")).toEqual({
       designation: null,
       previousQty: null,
       isOffReferential: true,
+      theoreticalQty: 0,
     });
   });
 
@@ -46,6 +50,41 @@ describe("lineInfoFor", () => {
     const countLines: CountLines = {};
     lineInfoFor(THEORETICAL_LINES, countLines, "ART-001");
     expect(countLines).toEqual({});
+  });
+});
+
+describe("resolveArticleRef — single reference→line resolution point, shared by scan and manual entry", () => {
+  const WITH_SUPPLIER_REFS: OfflineTheoreticalLine[] = [
+    { articleRef: "F501254", designation: "Filtre UV", supplierRef: "501254", theoreticalQty: 6 },
+    { articleRef: "ART-002", designation: "Encre cyan", supplierRef: "CYAN-99", theoreticalQty: 48 },
+    // Shares supplierRef "DUP-1" with the line below — the ambiguous case.
+    { articleRef: "ART-003", designation: "Cartouche A", supplierRef: "DUP-1", theoreticalQty: 5 },
+    { articleRef: "ART-004", designation: "Cartouche B", supplierRef: "DUP-1", theoreticalQty: 5 },
+  ];
+
+  it("resolves an exact Code art. match directly, without consulting supplierRef", () => {
+    expect(resolveArticleRef(WITH_SUPPLIER_REFS, "F501254")).toEqual({ status: "resolved", articleRef: "F501254" });
+  });
+
+  it("falls back to Référence fournisseur when there's no Code art. match", () => {
+    expect(resolveArticleRef(WITH_SUPPLIER_REFS, "501254")).toEqual({ status: "resolved", articleRef: "F501254" });
+  });
+
+  it("trims whitespace before matching either field (manual typing, camera codes)", () => {
+    expect(resolveArticleRef(WITH_SUPPLIER_REFS, "  501254  ")).toEqual({ status: "resolved", articleRef: "F501254" });
+  });
+
+  it("reports not-found for a reference matching neither field", () => {
+    expect(resolveArticleRef(WITH_SUPPLIER_REFS, "NOPE-000")).toEqual({ status: "not-found" });
+  });
+
+  it("reports ambiguous when a supplierRef is shared by more than one theoretical line — never guesses", () => {
+    expect(resolveArticleRef(WITH_SUPPLIER_REFS, "DUP-1")).toEqual({ status: "ambiguous" });
+  });
+
+  it("never matches on a null/absent supplierRef", () => {
+    const lines: OfflineTheoreticalLine[] = [{ articleRef: "ART-001", designation: "X", theoreticalQty: 1 }];
+    expect(resolveArticleRef(lines, "")).toEqual({ status: "not-found" });
   });
 });
 

@@ -3,6 +3,7 @@ import { prisma } from "../../lib/db/client";
 import { runPrepareSession, type PrepareSessionActor } from "../../lib/sessions/prepare-session";
 import { runSyncSession, type SyncSessionActor } from "../../lib/sessions/sync-session";
 import { runCloseSession, type CloseSessionActor } from "../../lib/sessions/close-session";
+import { runCancelSession, type CancelSessionActor } from "../../lib/sessions/cancel-session";
 import { listSessionsForUser, type ListSessionsActor } from "../../lib/sessions/list-sessions";
 
 const DEPOT = { code: "LIST-A", name: "List Depot A" };
@@ -215,5 +216,56 @@ describe("listSessionsForUser — écart counts and ordering", () => {
     expect(closedIndex).toBeGreaterThanOrEqual(0);
     expect(syncedIndex).toBeLessThan(preparedIndex);
     expect(preparedIndex).toBeLessThan(closedIndex);
+  });
+});
+
+describe("listSessionsForUser — CANCELLED excluded from normal lists (US9 'supprimer une session', soft delete)", () => {
+  it.each(["ADMIN", "DEPOT_MANAGER", "DIRECTION"] as const)(
+    "hides a CANCELLED session from %s, even though this role otherwise sees everything unrestricted",
+    async (role) => {
+      const sessionId = await prepareTestSession();
+      const cancelOutcome = await runCancelSession(sessionId, actors.ADMIN as CancelSessionActor);
+      expect(cancelOutcome.ok).toBe(true);
+
+      const outcome = await listSessionsForUser(actors[role] as ListSessionsActor);
+
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) return;
+      expect(outcome.sessions.map((s) => s.id)).not.toContain(sessionId);
+    },
+  );
+
+  it("hides a CANCELLED session from the LOGISTICS actor it was assigned to", async () => {
+    const sessionId = await prepareTestSession(actors.LOGISTICS.id);
+    const cancelOutcome = await runCancelSession(sessionId, actors.ADMIN as CancelSessionActor);
+    expect(cancelOutcome.ok).toBe(true);
+
+    const outcome = await listSessionsForUser(actors.LOGISTICS as ListSessionsActor);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.sessions.map((s) => s.id)).not.toContain(sessionId);
+  });
+
+  it("never physically deletes the session, its lines, or its audit trail — only narrows the SELECT", async () => {
+    const sessionId = await prepareTestSession();
+    await syncTestSession(sessionId, actors.ADMIN);
+    const cancelOutcome = await runCancelSession(sessionId, actors.ADMIN as CancelSessionActor);
+    expect(cancelOutcome.ok).toBe(true);
+
+    const outcome = await listSessionsForUser(actors.ADMIN as ListSessionsActor);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.sessions.map((s) => s.id)).not.toContain(sessionId);
+
+    const sessionRow = await prisma.inventorySession.findUnique({ where: { id: sessionId } });
+    expect(sessionRow).not.toBeNull();
+    expect(sessionRow?.status).toBe("CANCELLED");
+
+    const lines = await prisma.inventoryLine.findMany({ where: { sessionId } });
+    expect(lines.length).toBeGreaterThan(0);
+
+    const auditEntries = await prisma.auditLog.findMany({ where: { sessionId } });
+    expect(auditEntries.some((a) => a.action === "SESSION_CANCELLED")).toBe(true);
   });
 });

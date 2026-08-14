@@ -25,8 +25,8 @@ const LINKS: { href: string; title: string; description: string; icon: ReactNode
   },
   {
     href: "/admin/sessions",
-    title: "Annulation de sessions",
-    description: "Annuler une session en cours (non clôturée).",
+    title: "Supprimer une session",
+    description: "Retirer une session en cours des listes (non clôturée) — historique conservé.",
     icon: <BanIcon className="h-6 w-6" />,
   },
   {

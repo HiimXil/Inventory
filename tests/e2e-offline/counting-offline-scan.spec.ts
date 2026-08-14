@@ -318,3 +318,148 @@ test.describe("US2 — tap a row to count without scanning (CountingTable, offli
     await expect(page.getByTestId("quantity-entry-panel")).toBeVisible();
   });
 });
+
+test.describe("US2 — Référence fournisseur fallback resolution and expected-quantity display (offline)", () => {
+  let sessionId: string;
+
+  test.beforeAll(async () => {
+    const depot = await prisma.depot.upsert({
+      where: { code: `${DEPOT.code}-SUP` },
+      update: {},
+      create: { code: `${DEPOT.code}-SUP`, name: "E2E Offline SupplierRef Depot" },
+    });
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
+    process.env.ARTIS_MODE = "mock";
+    process.env.ARTIS_FIXTURE = "normal";
+    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, logistics.id);
+    if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
+    sessionId = outcome.sessionId;
+
+    // The mock ARTIS fixture never populates supplierRef — set it directly
+    // on the seeded lines to exercise the manual-entry/scan fallback.
+    // ART-001 gets a unique Référence fournisseur; ART-002/ART-003 share one
+    // on purpose, to model the ambiguous case.
+    await prisma.inventoryLine.update({
+      where: { sessionId_articleRef: { sessionId, articleRef: "ART-001" } },
+      data: { supplierRef: "501254" },
+    });
+    await prisma.inventoryLine.update({
+      where: { sessionId_articleRef: { sessionId, articleRef: "ART-002" } },
+      data: { supplierRef: "DUP-1" },
+    });
+    await prisma.inventoryLine.update({
+      where: { sessionId_articleRef: { sessionId, articleRef: "ART-003" } },
+      data: { supplierRef: "DUP-1" },
+    });
+  });
+
+  test.afterAll(async () => {
+    const depot = await prisma.depot.findUniqueOrThrow({ where: { code: `${DEPOT.code}-SUP` } });
+    await prisma.auditLog.deleteMany({ where: { sessionId } });
+    await prisma.inventoryLine.deleteMany({ where: { sessionId } });
+    await prisma.inventorySession.deleteMany({ where: { id: sessionId } });
+    await prisma.depot.delete({ where: { id: depot.id } });
+    await prisma.$disconnect();
+  });
+
+  async function goOfflineOnCountScreen(page: Page, context: import("@playwright/test").BrowserContext) {
+    await loginAs(page, "logistics@example.com", SEED_PASSWORD);
+    await page.goto(`/sessions/${sessionId}/count`);
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+  }
+
+  test("manual entry of a Référence fournisseur resolves to the correct Code art. — not off-referential", async ({
+    page,
+    context,
+  }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    // Typed value is the supplierRef ("501254"), not the articleRef ("ART-001").
+    await scan(page, "501254");
+
+    const panel = page.getByTestId("quantity-entry-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText("ART-001");
+    await expect(panel).not.toContainText(/hors référentiel/i);
+
+    await page.getByTestId("qty-total-input").fill("9");
+    await page.getByRole("button", { name: "Valider" }).click();
+
+    const row = page.locator('tr[data-article-ref="ART-001"]');
+    await expect(row).toBeVisible();
+    await expect(countedCell(row)).toHaveText("9");
+    // Never created a spurious off-referential row keyed on the raw supplierRef typed.
+    await expect(page.locator('tr[data-article-ref="501254"]')).toHaveCount(0);
+  });
+
+  test("manual entry of the exact Code art. is unchanged", async ({ page, context }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    await scan(page, "ART-001");
+
+    const panel = page.getByTestId("quantity-entry-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText("ART-001");
+    await expect(panel).not.toContainText(/hors référentiel/i);
+  });
+
+  test("manual entry of a Référence fournisseur shared by two articles is ambiguous — treated exactly like an unresolved scan, never a false match", async ({
+    page,
+    context,
+  }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    await scan(page, "DUP-1");
+
+    const panel = page.getByTestId("quantity-entry-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText(/hors référentiel/i);
+
+    await page.getByTestId("qty-total-input").fill("1");
+    await page.getByRole("button", { name: "Valider" }).click();
+
+    // Counted under the raw typed value — never silently attributed to
+    // either ART-002 or ART-003, both of which stay untouched.
+    await expect(page.locator('tr[data-article-ref="DUP-1"]')).toBeVisible();
+    await expect(countedCell(page.locator('tr[data-article-ref="ART-002"]'))).toHaveText("Non compté");
+    await expect(countedCell(page.locator('tr[data-article-ref="ART-003"]'))).toHaveText("Non compté");
+  });
+
+  test("the entry panel shows the expected (theoretical) quantity next to what's being validated, highlighted red on écart", async ({
+    page,
+    context,
+  }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    await scan(page, "ART-001"); // theoreticalQty 12 (mock "normal" fixture)
+    await page.getByTestId("qty-total-input").fill("8");
+
+    const expected = page.getByTestId("qty-expected");
+    await expect(expected).toContainText(/compté : 8/i);
+    await expect(expected).toContainText(/attendu : 12/i);
+    // Mismatch (8 != 12) is highlighted the same red as the existing écart convention.
+    await expect(page.getByTestId("qty-expected-value")).toHaveClass(/text-red-700/);
+  });
+
+  test("off-referential entry shows Attendu : 0 with a clear hors-référentiel note, no red highlight logic needed to notice it", async ({
+    page,
+    context,
+  }) => {
+    await goOfflineOnCountScreen(page, context);
+
+    await scan(page, "UNKNOWN-EXPECTED-TEST");
+    await page.getByTestId("qty-total-input").fill("2");
+
+    const expected = page.getByTestId("qty-expected");
+    await expect(expected).toContainText(/attendu : 0/i);
+    await expect(expected).toContainText(/hors référentiel/i);
+  });
+});

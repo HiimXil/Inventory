@@ -5,7 +5,22 @@ import { ensureSessionBootstrapped } from "../../lib/offline/bootstrap";
 
 const BOOTSTRAP_RESPONSE = {
   session: { id: "session-1", status: "PREPARED", depot: { code: "PAR01", name: "Paris - Atelier 1" } },
-  lines: [{ articleRef: "ART-001", designation: "Imprimante UV", theoreticalQty: 12 }],
+  lines: [
+    { articleRef: "ART-001", designation: "Imprimante UV", supplierRef: null, theoreticalQty: 12, countedQty: null, isOffReferential: false },
+  ],
+};
+
+// Models a session already counted and synced once — a later reprise must
+// restore countLines from these server values instead of resetting to {}
+// (the reprise-fix bug). ART-001 was counted, ART-002 never was (stays
+// absent from countLines), OFF-001 is an off-referential line also counted.
+const BOOTSTRAP_RESPONSE_WITH_COUNTS = {
+  session: { id: "session-1", status: "SYNCED", depot: { code: "PAR01", name: "Paris - Atelier 1" } },
+  lines: [
+    { articleRef: "ART-001", designation: "Imprimante UV", supplierRef: null, theoreticalQty: 12, countedQty: 5, isOffReferential: false },
+    { articleRef: "ART-002", designation: "Cartouche encre", supplierRef: null, theoreticalQty: 8, countedQty: null, isOffReferential: false },
+    { articleRef: "OFF-001", designation: null, supplierRef: null, theoreticalQty: 0, countedQty: 2, isOffReferential: true },
+  ],
 };
 
 const DIRTY_SESSION: OfflineSession = {
@@ -97,6 +112,40 @@ describe("ensureSessionBootstrapped — clean (non-dirty) local cache always rev
     const outcome = await ensureSessionBootstrapped("session-1");
 
     expect(outcome).toEqual({ status: "cached", session: CLEAN_SESSION });
+  });
+
+  it("restores countLines from the server's counts instead of resetting to {} (reprise fix — this is the test that missed the bug)", async () => {
+    await offlineDB.sessions.put(CLEAN_SESSION);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => BOOTSTRAP_RESPONSE_WITH_COUNTS })),
+    );
+
+    const outcome = await ensureSessionBootstrapped("session-1");
+
+    expect(outcome.status).toBe("fetched");
+    const stored = await offlineDB.sessions.get("session-1");
+    expect(stored?.countLines).toEqual({
+      "ART-001": { countedQty: 5, isOffReferential: false },
+      "OFF-001": { countedQty: 2, isOffReferential: true },
+    });
+    // ART-002 has countedQty: null server-side (never counted) — must stay
+    // absent from countLines, preserving the "jamais compté" distinction.
+    expect(stored?.countLines["ART-002"]).toBeUndefined();
+  });
+
+  it("a never-counted article (server countedQty null) stays absent from countLines after reprise", async () => {
+    await offlineDB.sessions.put(CLEAN_SESSION);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => BOOTSTRAP_RESPONSE_WITH_COUNTS })),
+    );
+
+    await ensureSessionBootstrapped("session-1");
+
+    const stored = await offlineDB.sessions.get("session-1");
+    expect(stored?.theoreticalLines.some((line) => line.articleRef === "ART-002")).toBe(true);
+    expect("ART-002" in (stored?.countLines ?? {})).toBe(false);
   });
 });
 

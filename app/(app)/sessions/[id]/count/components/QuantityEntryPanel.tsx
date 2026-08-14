@@ -143,6 +143,21 @@ export function QuantityEntryPanel({ panel, onConfirmTotal, onConfirmDelta, onCa
           </div>
         )}
 
+        {previewTotal !== null && (
+          <p data-testid="qty-expected" className="text-lg text-ink">
+            Compté : <strong className="tabular-nums">{previewTotal}</strong> — Attendu :{" "}
+            <strong
+              data-testid="qty-expected-value"
+              className={
+                previewTotal !== panel.theoreticalQty ? "text-red-700 font-semibold tabular-nums" : "tabular-nums"
+              }
+            >
+              {panel.theoreticalQty}
+            </strong>
+            {panel.isOffReferential && <span className="text-muted"> — hors référentiel</span>}
+          </p>
+        )}
+
         <div className="mt-2 flex flex-col gap-3 sm:flex-row">
           <Button
             type="button"

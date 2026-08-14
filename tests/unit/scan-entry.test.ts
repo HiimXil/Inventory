@@ -4,9 +4,9 @@ import type { LineInfo } from "../../lib/offline/scan-processing";
 
 const CLOSED: ScanPanelState = { status: "closed" };
 
-const KNOWN_LINE: LineInfo = { designation: "Imprimante UV", previousQty: null, isOffReferential: false };
-const OFF_REF_LINE: LineInfo = { designation: null, previousQty: null, isOffReferential: true };
-const ALREADY_COUNTED_LINE: LineInfo = { designation: "Encre cyan", previousQty: 8, isOffReferential: false };
+const KNOWN_LINE: LineInfo = { designation: "Imprimante UV", previousQty: null, isOffReferential: false, theoreticalQty: 12 };
+const OFF_REF_LINE: LineInfo = { designation: null, previousQty: null, isOffReferential: true, theoreticalQty: 0 };
+const ALREADY_COUNTED_LINE: LineInfo = { designation: "Encre cyan", previousQty: 8, isOffReferential: false, theoreticalQty: 10 };
 
 describe("decideScanAction", () => {
   it("opens a panel for a first scan of a known article (never counted)", () => {

@@ -1,10 +1,13 @@
 import { offlineDB, type OfflineSession, type OfflineSessionStatus } from "./db";
+import type { CountLines } from "./scan-processing";
 
 type BootstrapLine = {
   articleRef: string;
   designation: string | null;
   supplierRef: string | null;
   theoreticalQty: number;
+  countedQty: number | null;
+  isOffReferential: boolean;
 };
 
 type BootstrapResponse = {
@@ -22,6 +25,24 @@ export type BootstrapOutcome =
   | { status: "not-found"; message: string }
   | { status: "error"; message: string };
 
+/**
+ * Rebuilds countLines from the server's snapshot (reprise fix): a line with
+ * a non-null countedQty was already counted (possibly synced from another
+ * device or a prior session on this one) and must reappear as such, not as
+ * "jamais compté" — see toOfflineSession. A null countedQty means the
+ * server itself has never recorded a count for that article, so it stays
+ * absent from countLines, preserving the null/counted distinction.
+ */
+function countLinesFromServer(lines: BootstrapLine[]): CountLines {
+  const countLines: CountLines = {};
+  for (const line of lines) {
+    if (line.countedQty !== null) {
+      countLines[line.articleRef] = { countedQty: line.countedQty, isOffReferential: line.isOffReferential };
+    }
+  }
+  return countLines;
+}
+
 function toOfflineSession(data: BootstrapResponse): OfflineSession {
   return {
     sessionId: data.session.id,
@@ -37,7 +58,7 @@ function toOfflineSession(data: BootstrapResponse): OfflineSession {
       supplierRef: line.supplierRef,
       theoreticalQty: line.theoreticalQty,
     })),
-    countLines: {},
+    countLines: countLinesFromServer(data.lines),
     dirty: false,
     lastLocalUpdate: new Date().toISOString(),
   };

@@ -12,7 +12,7 @@ import { useParams } from "next/navigation";
 import { ensureSessionBootstrapped } from "@/lib/offline/bootstrap";
 import { useOfflineSession, type QuantityUpdateOutcome } from "@/lib/offline/useOfflineSession";
 import { nextScanFeedbackState, type ScanFeedbackState } from "@/lib/offline/scan-feedback";
-import { lineInfoFor } from "@/lib/offline/scan-processing";
+import { lineInfoFor, resolveArticleRef } from "@/lib/offline/scan-processing";
 import { computeCountingProgress, computePendingSyncCount } from "@/lib/offline/counting-progress";
 import { filterAndSortLines, type CountingViewMode } from "@/lib/offline/counting-filter";
 import { AppShell } from "@/components/layout/AppShell";
@@ -109,14 +109,20 @@ function SessionCounter({ sessionId }: { sessionId: string }) {
 
   // Fires for a camera detection, a manually-typed reference, and a tap on
   // a row in the table below (CountingTable's onSelectLine) alike — all
-  // three funnel through this one handler. Either way, this only ever
-  // opens/updates the quantity-entry panel. A vibration confirms "the scan
-  // registered, the panel is open, go type"; the actual quantity never
-  // changes here (see handleConfirmTotal/handleConfirmDelta below), only on
-  // explicit confirm.
+  // three funnel through this one handler, which is also the single
+  // articleRef/supplierRef resolution point (resolveArticleRef): a scanned
+  // or typed value that only matches a Référence fournisseur is translated
+  // to its real Code art. before anything else happens, so the count lands
+  // on the right line either way. Either way, this only ever opens/updates
+  // the quantity-entry panel. A vibration confirms "the scan registered,
+  // the panel is open, go type"; the actual quantity never changes here
+  // (see handleConfirmTotal/handleConfirmDelta below), only on explicit
+  // confirm.
   const handleDetected = useCallback(
-    (articleRef: string) => {
+    (rawRef: string) => {
       if (!session) return;
+      const resolution = resolveArticleRef(session.theoreticalLines, rawRef);
+      const articleRef = resolution.status === "resolved" ? resolution.articleRef : rawRef.trim();
       const lineInfo = lineInfoFor(session.theoreticalLines, session.countLines, articleRef);
       const opened = handleScan(articleRef, lineInfo);
       if (opened && typeof navigator !== "undefined" && "vibrate" in navigator) {

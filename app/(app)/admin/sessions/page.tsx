@@ -41,9 +41,10 @@ export default async function AdminSessionsPage() {
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
         <Breadcrumb items={[{ label: "Administration", href: "/admin" }, { label: "Sessions" }]} />
         <div>
-          <h1 className="text-3xl font-bold text-ink">Annulation de sessions</h1>
+          <h1 className="text-3xl font-bold text-ink">Supprimer une session</h1>
           <p className="mt-1 text-base text-muted">
-            Annuler une session en cours (préparée ou synchronisée, non clôturée).
+            Retirer une session en cours (préparée ou synchronisée, non clôturée) des listes — l&apos;historique et
+            l&apos;audit restent intacts.
           </p>
         </div>
 

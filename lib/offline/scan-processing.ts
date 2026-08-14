@@ -11,6 +11,8 @@ export type LineInfo = {
   /** null = never counted yet (first scan); a number, possibly 0, means already on file. */
   previousQty: number | null;
   isOffReferential: boolean;
+  /** The theoretical quantity to show as "Attendu" in the entry panel — 0 for an off-referential/unknown article. */
+  theoreticalQty: number;
 };
 
 /**
@@ -30,7 +32,47 @@ export function lineInfoFor(
     designation: theoreticalLine?.designation ?? null,
     previousQty: existing?.countedQty ?? null,
     isOffReferential: existing?.isOffReferential ?? !knownArticleRefsOf(theoreticalLines).has(articleRef),
+    theoreticalQty: theoreticalLine?.theoreticalQty ?? 0,
   };
+}
+
+export type ArticleResolution =
+  | { status: "resolved"; articleRef: string }
+  | { status: "ambiguous" }
+  | { status: "not-found" };
+
+/**
+ * Single reference→line resolution point shared by camera scan and manual
+ * keyboard entry — both funnel into the same onScan/handleDetected callback
+ * (see QRScanner.tsx and count/page.tsx), which calls this before anything
+ * else. Tries an exact Code art. (articleRef) match first; if none, falls
+ * back to Référence fournisseur (supplierRef) — a manufacturer/supplier
+ * code some barcodes carry or a user types instead of the internal one. A
+ * supplierRef shared by more than one theoretical line can't be resolved
+ * safely, so it comes back "ambiguous" rather than guessing — the caller
+ * treats that exactly like "not-found" (falls through to an off-referential
+ * entry keyed on the raw input), never silently attributing the count to
+ * one of the ambiguous candidates.
+ */
+export function resolveArticleRef(
+  theoreticalLines: OfflineTheoreticalLine[],
+  rawRef: string,
+): ArticleResolution {
+  const trimmed = rawRef.trim();
+
+  if (theoreticalLines.some((line) => line.articleRef === trimmed)) {
+    return { status: "resolved", articleRef: trimmed };
+  }
+
+  const supplierMatches = theoreticalLines.filter((line) => line.supplierRef != null && line.supplierRef === trimmed);
+  if (supplierMatches.length === 1) {
+    return { status: "resolved", articleRef: supplierMatches[0].articleRef };
+  }
+  if (supplierMatches.length > 1) {
+    return { status: "ambiguous" };
+  }
+
+  return { status: "not-found" };
 }
 
 export type ManualQuantityResult =

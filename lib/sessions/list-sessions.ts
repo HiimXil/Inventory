@@ -33,6 +33,17 @@ const ACTIVE_STATUS_WEIGHT: Partial<Record<SessionStatus, number>> = { SYNCED: 0
  * introduced. Scoped directly in the query rather than fetched-then-filtered
  * (assignedToId lives on InventorySession itself, no separate lookup needed
  * now that attribution replaces the old audit-log-derived ownership).
+ *
+ * CANCELLED is excluded here for every role (US9, "supprimer une session" —
+ * a soft-delete reusing the existing cancellation mechanism, no new
+ * status/field — see lib/sessions/cancel-session.ts's doc comment).
+ * Deliberately unconditional, including for ADMIN: the "normal" list every
+ * role sees is meant to stay clean of removed sessions; ADMIN's own
+ * dedicated management view (lib/admin/sessions.ts, /admin/sessions) stays
+ * unfiltered on purpose, so nothing is actually lost — a "deleted" session
+ * only relocates to where an admin would already look for it. The session
+ * row, its lines, and every AuditLog entry about it are never touched —
+ * this only narrows a SELECT's WHERE clause.
  */
 export async function listSessionsForUser(actor: ListSessionsActor): Promise<ListSessionsOutcome> {
   try {
@@ -49,7 +60,10 @@ export async function listSessionsForUser(actor: ListSessionsActor): Promise<Lis
   }
 
   const sessions = await prisma.inventorySession.findMany({
-    where: actor!.role === "LOGISTICS" ? { assignedToId: actor!.id } : undefined,
+    where: {
+      status: { not: "CANCELLED" },
+      ...(actor!.role === "LOGISTICS" ? { assignedToId: actor!.id } : {}),
+    },
     orderBy: { createdAt: "desc" },
     include: { depot: true },
   });

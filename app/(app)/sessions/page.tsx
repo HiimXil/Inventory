@@ -21,7 +21,9 @@ export default async function SessionsListPage() {
   }
 
   const active = outcome.sessions.filter((s) => s.status === "PREPARED" || s.status === "SYNCED");
-  const archived = outcome.sessions.filter((s) => s.status === "CLOSED" || s.status === "CANCELLED");
+  // CANCELLED never reaches here at all (listSessionsForUser excludes it,
+  // US9 "supprimer une session") — CLOSED is the only archived status left.
+  const archived = outcome.sessions.filter((s) => s.status === "CLOSED");
 
   return (
     <AppShell nav={nav} actions={<AccountMenu email={authSession.user.email} />}>

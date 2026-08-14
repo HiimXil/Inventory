@@ -57,7 +57,7 @@ test.describe("US6 — administration", () => {
 
     await page.goto("/admin");
     await expect(page.getByRole("link", { name: /gestion des utilisateurs/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /annulation de sessions/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /supprimer une session/i })).toBeVisible();
     await expect(page.getByRole("link", { name: /journal d'audit/i })).toBeVisible();
 
     // --- Create a user, then prove they can actually log in ---
@@ -74,16 +74,16 @@ test.describe("US6 — administration", () => {
     const newUserLoginResponse = await loginAs(page, createdUserEmail, "NouveauMdp123!");
     expect(newUserLoginResponse.ok()).toBe(true);
 
-    // --- Cancel a non-closed session ---
+    // --- Delete (soft — status CANCELLED) a non-closed session ---
     await loginAs(page, "admin@example.com", SEED_PASSWORD);
     await page.goto("/admin/sessions");
     const row = page.locator(`tr[data-session-id="${sessionIdToCancel}"]`);
     await expect(row).toHaveAttribute("data-session-status", "PREPARED");
-    // "Annuler" only opens the confirmation dialog now (ConfirmDialog,
+    // "Supprimer" only opens the confirmation dialog now (ConfirmDialog,
     // replacing the previous window.confirm()-shaped one-click submit) — the
-    // actual cancellation happens on the dialog's own confirm button.
-    await row.getByRole("button", { name: /^annuler$/i }).click();
-    await page.getByRole("button", { name: /confirmer l'annulation/i }).click();
+    // actual deletion happens on the dialog's own confirm button.
+    await row.getByRole("button", { name: /^supprimer$/i }).click();
+    await page.getByRole("button", { name: /confirmer la suppression/i }).click();
 
     await expect(page.locator(`tr[data-session-id="${sessionIdToCancel}"]`)).toHaveAttribute(
       "data-session-status",
