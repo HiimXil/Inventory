@@ -34,15 +34,19 @@ test.describe("FR-026 — shell version check surfaced by /sync", () => {
       create: DEPOT_MATCH,
     });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
 
     process.env.ARTIS_MODE = "mock";
     process.env.ARTIS_FIXTURE = "normal";
 
-    const mismatchOutcome = await runPrepareSession(depotMismatch.id, { id: admin.id, role: "ADMIN" });
+    // Both assigned to logistics@example.com (US7) — that's who logs in
+    // below to count; bootstrap now scopes LOGISTICS to the session's
+    // assignee.
+    const mismatchOutcome = await runPrepareSession(depotMismatch.id, { id: admin.id, role: "ADMIN" }, logistics.id);
     if (!mismatchOutcome.ok) throw new Error(`prepare failed in test setup: ${mismatchOutcome.error}`);
     mismatchSessionId = mismatchOutcome.sessionId;
 
-    const matchOutcome = await runPrepareSession(depotMatch.id, { id: admin.id, role: "ADMIN" });
+    const matchOutcome = await runPrepareSession(depotMatch.id, { id: admin.id, role: "ADMIN" }, logistics.id);
     if (!matchOutcome.ok) throw new Error(`prepare failed in test setup: ${matchOutcome.error}`);
     matchSessionId = matchOutcome.sessionId;
   });

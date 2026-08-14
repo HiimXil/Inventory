@@ -12,22 +12,6 @@ export type ViewSessionOutcome =
   | { ok: false; reason: "not-found" | "unauthenticated" | "forbidden" };
 
 /**
- * LOGISTICS never prepares a session (PREPARE excludes that role), so
- * InventorySession.preparedById can never name a LOGISTICS user — it can't
- * be used as "their" session. The one per-user link the schema does record
- * for a role that can only count+sync is the actor on that session's
- * SESSION_SYNCED audit entry, so that's what "sa session" resolves to here.
- */
-export async function resolveLogisticsOwnerId(sessionId: string): Promise<string | null> {
-  const syncLog = await prisma.auditLog.findFirst({
-    where: { sessionId, action: "SESSION_SYNCED" },
-    orderBy: { createdAt: "desc" },
-    select: { actorId: true },
-  });
-  return syncLog?.actorId ?? null;
-}
-
-/**
  * Server-side guard for /sessions/[id] (RUNBOOK correctif — this route had
  * no guard at all, unlike GET /bootstrap). Mirrors bootstrap's check order
  * (session existence, then auth, then RBAC) and its "journalize every
@@ -60,12 +44,15 @@ export async function loadSessionForView(
     return { ok: false, reason: actor ? "forbidden" : "unauthenticated" };
   }
 
-  // FR-027: LOGISTICS is scoped to their own session; ADMIN/DEPOT_MANAGER/
-  // DIRECTION see every session (already guaranteed by VIEW_RESULTS above).
+  // FR-027/US7: LOGISTICS is scoped to the session assigned to them;
+  // ADMIN/DEPOT_MANAGER/DIRECTION see every session (already guaranteed by
+  // VIEW_RESULTS above). A session with no assignee at all (assignedToId
+  // null — created before this field existed) never matches, so it stays
+  // invisible to every LOGISTICS user until explicitly assigned; that's the
+  // documented backward-compat behavior, not a bug.
   if (actor!.role === "LOGISTICS") {
-    const ownerId = await resolveLogisticsOwnerId(sessionId);
     try {
-      assertOwnsSession(actor!.role, ownerId ?? "", actor!.id);
+      assertOwnsSession(actor!.role, session.assignedToId ?? "", actor!.id);
     } catch {
       await prisma.auditLog.create({
         data: {

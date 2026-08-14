@@ -12,6 +12,13 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "tests/e2e-offline",
   timeout: 30_000,
+  // ARTIS_MODE=mock forced for this whole run — see the file's own comment.
+  // Independent of, and redundant with, webServer.env below on purpose:
+  // this covers spec files that call runPrepareSession() directly in the
+  // test process, that one covers the build:pwa/start server. Several specs
+  // here do exactly that (test.beforeAll preparing a session without going
+  // through the browser at all), so both matter.
+  globalSetup: "./playwright.global-setup-mock.ts",
   use: {
     baseURL: "http://127.0.0.1:3000",
     headless: true,
@@ -26,5 +33,8 @@ export default defineConfig({
     port: 3000,
     timeout: 300_000,
     reuseExistingServer: !process.env.CI,
+    env: {
+      ARTIS_MODE: "mock",
+    },
   },
 });

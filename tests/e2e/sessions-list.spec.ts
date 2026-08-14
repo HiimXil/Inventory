@@ -41,7 +41,9 @@ test.describe("liste des sessions (/sessions)", () => {
     process.env.ARTIS_MODE = "mock";
     process.env.ARTIS_FIXTURE = "normal";
 
-    const ownOutcome = await runPrepareSession(depotOwn.id, adminActor);
+    // "Own" is assigned TO the logistics actor (US7) — who physically syncs
+    // it no longer decides visibility, only the assignment does.
+    const ownOutcome = await runPrepareSession(depotOwn.id, adminActor, logisticsActor.id);
     if (!ownOutcome.ok) throw new Error(`prepare failed in test setup: ${ownOutcome.error}`);
     ownSessionId = ownOutcome.sessionId;
     const ownSync = await runSyncSession(ownSessionId, logisticsActor, {
@@ -50,7 +52,9 @@ test.describe("liste des sessions (/sessions)", () => {
     });
     if (!ownSync.ok || !ownSync.applied) throw new Error("sync failed in test setup");
 
-    const otherOutcome = await runPrepareSession(depotOther.id, adminActor);
+    // "Other" is assigned to admin, not the logistics actor — even though
+    // nothing stops admin from being the one who syncs it too.
+    const otherOutcome = await runPrepareSession(depotOther.id, adminActor, adminActor.id);
     if (!otherOutcome.ok) throw new Error(`prepare failed in test setup: ${otherOutcome.error}`);
     otherSessionId = otherOutcome.sessionId;
     const otherSync = await runSyncSession(otherSessionId, adminActor, {
@@ -90,7 +94,7 @@ test.describe("liste des sessions (/sessions)", () => {
     await expect(page).toHaveURL(new RegExp(`/sessions/${ownSessionId}$`));
   });
 
-  test("LOGISTICS only sees sessions they synced themselves", async ({ page }) => {
+  test("LOGISTICS only sees sessions assigned to them (US7)", async ({ page }) => {
     await loginAs(page, "logistics@example.com", SEED_PASSWORD);
 
     await page.goto("/sessions");

@@ -36,7 +36,7 @@ test.describe("US5 — closure & export", () => {
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
     const actor = { id: admin.id, role: "ADMIN" as const };
 
-    const mainOutcome = await runPrepareSession(depotMain.id, actor);
+    const mainOutcome = await runPrepareSession(depotMain.id, actor, actor.id);
     if (!mainOutcome.ok) throw new Error(`prepare failed in test setup: ${mainOutcome.error}`);
     syncedSessionId = mainOutcome.sessionId;
 
@@ -49,7 +49,7 @@ test.describe("US5 — closure & export", () => {
     });
     if (!syncOutcome.ok || !syncOutcome.applied) throw new Error("sync failed in test setup");
 
-    const preparedOutcome = await runPrepareSession(depotPrepared.id, actor);
+    const preparedOutcome = await runPrepareSession(depotPrepared.id, actor, actor.id);
     if (!preparedOutcome.ok) throw new Error(`prepare failed in test setup: ${preparedOutcome.error}`);
     preparedSessionId = preparedOutcome.sessionId;
   });

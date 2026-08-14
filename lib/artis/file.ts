@@ -1,13 +1,21 @@
 import ExcelJS from "exceljs";
 import type { ArtisAdapter, ArtisDepot, ArtisStockLine, ArtisStockPage } from "./interface";
-import { artisFileRowsSchema } from "./validation";
+import { buildArtisFileRowsSchema } from "./validation";
 import { ArtisFileFormatError, ArtisFileValidationError } from "./errors";
 
-const SHEET_NAME = "a_Article";
-const REQUIRED_HEADERS = ["Code", "Libellé", "Stock physique"] as const;
+const SHEET_NAME = "a_ResultatsRecherche";
+const REQUIRED_HEADERS = ["Code art.", "Libellé art.", "Qté en Stock", "Code dépôt"] as const;
+const SUPPLIER_REF_HEADER = "Référence fournisseur";
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 Mo
 
-type RawRow = { articleRef: string; designation: string; qty: number; rowNumber: number };
+type RawRow = {
+  articleRef: string;
+  designation: string;
+  supplierRef: string | null;
+  qty: number;
+  depotCode: string;
+  rowNumber: number;
+};
 
 function cellToString(value: ExcelJS.CellValue): string {
   if (value == null) return "";
@@ -30,21 +38,17 @@ function cellToNumber(value: ExcelJS.CellValue): number {
  * export rather than a live API call (FR-029, real-import primary path —
  * ArtisHttpAdapter remains unimplemented, see lib/artis/factory.ts).
  *
- * Columns are matched BY HEADER NAME, never by position: a real export
- * carries an unnamed, always-blank column between "Code" and "Référence"
- * that would silently corrupt any index-based mapping.
- *
- * "Référence" (manufacturer reference, e.g. "300309") is deliberately never
- * read — it's blank on some real rows, so it can't be the join key. "Code"
- * (e.g. "F300309") is what the app's QR codes encode and is always present
- * and unique, confirmed against the live ARTIS API.
- *
- * theoreticalQty is mapped from "Stock physique", NOT "Qté théorique".
- * "Qté théorique" = Stock physique − Résa stock — a net-of-reservations
- * availability figure. A technician physically counting their van's stock
- * counts reserved parts too (they're physically there), so using "Qté
- * théorique" would manufacture a false discrepancy for every reserved
- * article. Confirmed against the live ARTIS API on three witness articles.
+ * Current export format (the old "a_Article" sheet is retired — no
+ * compatibility kept with it, confirmed against a real 138-row export):
+ * sheet "a_ResultatsRecherche", columns matched BY HEADER NAME, never by
+ * position. "Code art." is the join key (what the printed QR codes encode,
+ * always present and unique). "Qté en Stock" is now the only quantity
+ * column at all — the old "Stock physique" vs "Qté théorique" distinction
+ * is gone from this export. "Code dépôt" is new: every row carries the
+ * depot the export was run against, checked below against the depot the
+ * responsable actually selected. Every other column (Libellé dépôt, Empl.,
+ * Activité, Famille, Sous famille, Marque, Nom fournisseur) is ignored
+ * without failing on it.
  */
 export class ArtisFileAdapter implements ArtisAdapter {
   private readonly fileBuffer: Buffer;
@@ -82,11 +86,11 @@ export class ArtisFileAdapter implements ArtisAdapter {
       return { depotCode, page, pageCount: 1, items: [] };
     }
 
-    const items = await this.parse();
+    const items = await this.parse(depotCode);
     return { depotCode, page: 1, pageCount: 1, items };
   }
 
-  private async parse(): Promise<ArtisStockLine[]> {
+  private async parse(selectedDepotCode: string): Promise<ArtisStockLine[]> {
     const workbook = new ExcelJS.Workbook();
     try {
       // exceljs's own .d.ts shadows the global `Buffer` type with a bare
@@ -99,17 +103,9 @@ export class ArtisFileAdapter implements ArtisAdapter {
       throw new ArtisFileFormatError("Le fichier n'est pas un classeur Excel (.xlsx) valide.");
     }
 
-    let sheet = workbook.worksheets.find((candidate) => candidate.name === SHEET_NAME);
+    const sheet = workbook.worksheets.find((candidate) => candidate.name === SHEET_NAME);
     if (!sheet) {
-      sheet = workbook.worksheets[0];
-      if (sheet) {
-        console.warn(
-          `[ArtisFileAdapter] Feuille "${SHEET_NAME}" introuvable ; utilisation de la première feuille ("${sheet.name}") à la place.`,
-        );
-      }
-    }
-    if (!sheet) {
-      throw new ArtisFileFormatError("Le classeur ne contient aucune feuille.");
+      throw new ArtisFileFormatError(`Feuille "${SHEET_NAME}" introuvable dans le classeur.`);
     }
 
     const columnByHeader = new Map<string, number>();
@@ -123,9 +119,12 @@ export class ArtisFileAdapter implements ArtisAdapter {
       throw new ArtisFileValidationError(`Colonnes obligatoires manquantes : ${missingHeaders.join(", ")}.`);
     }
 
-    const codeCol = columnByHeader.get("Code")!;
-    const designationCol = columnByHeader.get("Libellé")!;
-    const qtyCol = columnByHeader.get("Stock physique")!;
+    const codeCol = columnByHeader.get("Code art.")!;
+    const designationCol = columnByHeader.get("Libellé art.")!;
+    const qtyCol = columnByHeader.get("Qté en Stock")!;
+    const depotCodeCol = columnByHeader.get("Code dépôt")!;
+    // Optional: absent entirely -> every row's supplierRef is simply null.
+    const supplierRefCol = columnByHeader.get(SUPPLIER_REF_HEADER);
 
     const rawRows: RawRow[] = [];
     for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
@@ -133,21 +132,26 @@ export class ArtisFileAdapter implements ArtisAdapter {
       const codeCell = row.getCell(codeCol).value;
       const designationCell = row.getCell(designationCol).value;
       const qtyCell = row.getCell(qtyCol).value;
+      const depotCodeCell = row.getCell(depotCodeCol).value;
+      const supplierRefCell = supplierRefCol !== undefined ? row.getCell(supplierRefCol).value : null;
 
-      // A fully blank row (no code, no designation, no quantity at all) is
-      // trailing spreadsheet padding, not a record with a missing Code —
-      // skip it rather than reject the whole import over it.
-      if (codeCell == null && designationCell == null && qtyCell == null) continue;
+      // A fully blank row (no code, no designation, no quantity, no depot at
+      // all) is trailing spreadsheet padding, not a record with a missing
+      // Code — skip it rather than reject the whole import over it.
+      if (codeCell == null && designationCell == null && qtyCell == null && depotCodeCell == null) continue;
 
+      const supplierRefText = cellToString(supplierRefCell);
       rawRows.push({
         articleRef: cellToString(codeCell),
         designation: cellToString(designationCell),
+        supplierRef: supplierRefText.length > 0 ? supplierRefText : null,
         qty: cellToNumber(qtyCell),
+        depotCode: cellToString(depotCodeCell),
         rowNumber,
       });
     }
 
-    const parsed = artisFileRowsSchema.safeParse(rawRows);
+    const parsed = buildArtisFileRowsSchema(selectedDepotCode).safeParse(rawRows);
     if (!parsed.success) {
       const messages = parsed.error.issues.map((issue) => {
         const index = typeof issue.path[0] === "number" ? issue.path[0] : undefined;
@@ -162,6 +166,7 @@ export class ArtisFileAdapter implements ArtisAdapter {
     return parsed.data.map((row) => ({
       articleRef: row.articleRef,
       designation: row.designation,
+      supplierRef: row.supplierRef,
       qty: row.qty,
     }));
   }

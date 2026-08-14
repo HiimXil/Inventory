@@ -25,7 +25,7 @@ test.describe("US2 — offline counting shell (production build, FR-026)", () =>
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
 
     process.env.ARTIS_MODE = "mock";
-    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, admin.id);
     if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
     sessionId = outcome.sessionId;
   });
@@ -78,5 +78,32 @@ test.describe("US2 — offline counting shell (production build, FR-026)", () =>
     await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
     expect(page.url()).toContain(`/sessions/${sessionId}/count`);
     expect(page.url()).not.toContain("/login");
+  });
+
+  test("the header title is a link back to the home page, present and correctly wired even offline", async ({
+    page,
+    context,
+  }) => {
+    await loginAs(page, "depot@example.com", SEED_PASSWORD);
+    await page.goto(`/sessions/${sessionId}/count`);
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+
+    const homeLink = page.getByRole("link", { name: "SQP Inventaire" });
+    await expect(homeLink).toBeVisible();
+    await expect(homeLink).toHaveAttribute("href", "/");
+
+    // Purely a client-side render check, not a click-through: "/" itself
+    // resolves via a server-side session check (app/page.tsx), so it can
+    // never be a guaranteed-cached offline target — the contract here is
+    // "present and correctly attributed even while offline", not "network
+    // navigation succeeds offline" (see AppHeader.tsx's comment on the
+    // link for the accepted worst case: a visible failed navigation,
+    // never a silent no-op).
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: /comptage/i })).toBeVisible();
+    await expect(homeLink).toBeVisible();
+    await expect(homeLink).toHaveAttribute("href", "/");
   });
 });

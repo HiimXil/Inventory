@@ -8,6 +8,7 @@ export const artisDepotSchema = z.object({
 export const artisStockLineSchema = z.object({
   articleRef: z.string(),
   designation: z.string(),
+  supplierRef: z.string().nullable(),
   qty: z.number().int().nonnegative(),
 });
 
@@ -37,39 +38,69 @@ export const artisAggregatedStockSchema = z.object({
  * adapter's output shape and is stripped after validation.
  */
 export const artisFileRowSchema = z.object({
-  articleRef: z.string().trim().min(1, { message: "« Code » est vide." }),
+  articleRef: z.string().trim().min(1, { message: "« Code art. » est vide." }),
   designation: z.string(),
+  supplierRef: z.string().trim().nullable(),
   qty: z
-    .number({ invalid_type_error: "« Stock physique » n'est pas un nombre valide." })
-    .int({ message: "« Stock physique » n'est pas un entier." })
-    .nonnegative({ message: "« Stock physique » est négatif." }),
+    .number({ invalid_type_error: "« Qté en Stock » n'est pas un nombre valide." })
+    .int({ message: "« Qté en Stock » n'est pas un entier." })
+    .nonnegative({ message: "« Qté en Stock » est négative." }),
+  depotCode: z.string().trim().min(1, { message: "« Code dépôt » est vide." }),
   rowNumber: z.number().int().min(2),
 });
 
 export type ArtisFileRow = z.infer<typeof artisFileRowSchema>;
 
 /**
- * Cross-row rule (FR-021/FR-029 adapted to file import): "Code" is the join
- * key for the whole app (it's what the printed QR codes encode), so it must
- * be unique across the file — a duplicate can't be resolved silently one
- * way or the other, it has to fail the import.
+ * Cross-row rules (FR-021/FR-029 adapted to file import), parameterized by
+ * the depot actually selected at preparation time:
+ *
+ * 1. "Code art." is the join key for the whole app (it's what the printed
+ *    QR codes encode), so it must be unique across the file — a duplicate
+ *    can't be resolved silently one way or the other, it has to fail the
+ *    import.
+ * 2. Every row's "Code dépôt" must agree with itself (one file = one depot,
+ *    never a mix) AND with the depot the responsable actually selected in
+ *    the UI — a file exported for the wrong depot is a silent-corruption
+ *    risk (theoretical quantities compared against the wrong physical
+ *    location) that has to be caught here, before any session exists.
+ *
+ * A function rather than a static schema because rule 2 needs the selected
+ * depot code as external context — Zod schemas take that via closure.
  */
-export const artisFileRowsSchema = z
-  .array(artisFileRowSchema)
-  .min(1, { message: "Le fichier ne contient aucune ligne exploitable." })
-  .superRefine((rows, ctx) => {
-    const firstSeenAt = new Map<string, number>();
-    rows.forEach((row, index) => {
-      const previousIndex = firstSeenAt.get(row.articleRef);
-      if (previousIndex !== undefined) {
+export function buildArtisFileRowsSchema(selectedDepotCode: string) {
+  return z
+    .array(artisFileRowSchema)
+    .min(1, { message: "Le fichier ne contient aucune ligne exploitable." })
+    .superRefine((rows, ctx) => {
+      const firstSeenAt = new Map<string, number>();
+      rows.forEach((row, index) => {
+        const previousIndex = firstSeenAt.get(row.articleRef);
+        if (previousIndex !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `« Code art. » ${row.articleRef} est dupliqué (lignes ${rows[previousIndex].rowNumber} et ${row.rowNumber}).`,
+            path: [index, "articleRef"],
+          });
+        } else {
+          firstSeenAt.set(row.articleRef, index);
+        }
+      });
+
+      const distinctDepotCodes = [...new Set(rows.map((row) => row.depotCode))];
+      if (distinctDepotCodes.length > 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `« Code » ${row.articleRef} est dupliqué (lignes ${rows[previousIndex].rowNumber} et ${row.rowNumber}).`,
-          path: [index, "articleRef"],
+          message: `Le fichier mélange plusieurs dépôts (${distinctDepotCodes.join(", ")}) : un seul dépôt par fichier est autorisé.`,
+          path: [],
         });
-      } else {
-        firstSeenAt.set(row.articleRef, index);
+      } else if (distinctDepotCodes.length === 1 && distinctDepotCodes[0] !== selectedDepotCode) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Le fichier concerne le dépôt ${distinctDepotCodes[0]}, mais vous avez sélectionné ${selectedDepotCode}.`,
+          path: [],
+        });
       }
     });
-  });
+}
 

@@ -28,7 +28,20 @@ export function AppHeader({ title = "SQP Inventaire", nav, actions, unsynced, pe
   return (
     <header className="border-b-2 border-border bg-paper">
       <div className="flex min-h-touch-comfortable flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-        <span className="text-lg font-bold tracking-tight text-ink">{title}</span>
+        <Link
+          href="/"
+          // No prefetch: this header (and this link) mounts on /count, the
+          // one deliberate offline island (FR-026) — nothing here should
+          // trigger network activity just by being on screen. "/" itself
+          // resolves via a server-side session check (app/page.tsx), so it
+          // can never be a guaranteed-cached target; worst case offline is
+          // a visible failed-navigation/browser error, never a silent
+          // no-op, which is the explicit fallback this was built against.
+          prefetch={false}
+          className="-mx-2 -my-1 flex min-h-touch-min items-center rounded-control px-2 py-1 text-lg font-bold tracking-tight text-ink hover:bg-surface"
+        >
+          {title}
+        </Link>
         <div className="flex items-center gap-3">
           <OfflineIndicator unsynced={unsynced} pendingCount={pendingCount} />
           {actions}

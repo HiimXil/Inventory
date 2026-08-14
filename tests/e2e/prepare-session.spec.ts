@@ -53,8 +53,11 @@ test.describe("US1 — prepare session (E2E)", () => {
 
     const depot = await prisma.depot.findUniqueOrThrow({ where: { code: NORMAL_DEPOT.code } });
 
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
     await page.goto("/prepare");
     await page.selectOption("#depotId", depot.id);
+    await page.selectOption("#assignedToId", logistics.id);
     await page.getByRole("button", { name: /préparer la session/i }).click();
 
     await page.waitForURL(/\/sessions\/.+/);
@@ -84,8 +87,11 @@ test.describe("US1 — prepare session (E2E)", () => {
 
     const depot = await prisma.depot.findUniqueOrThrow({ where: { code: EMPTY_DEPOT.code } });
 
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
     await page.goto("/prepare");
     await page.selectOption("#depotId", depot.id);
+    await page.selectOption("#assignedToId", logistics.id);
     await page.getByRole("button", { name: /préparer la session/i }).click();
 
     // Next.js's App Router always renders its own empty role="alert" route
@@ -107,13 +113,17 @@ test.describe("US1 — prepare session (E2E)", () => {
 
     const depot = await prisma.depot.findUniqueOrThrow({ where: { code: DUP_DEPOT.code } });
 
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
     await page.goto("/prepare");
     await page.selectOption("#depotId", depot.id);
+    await page.selectOption("#assignedToId", logistics.id);
     await page.getByRole("button", { name: /préparer la session/i }).click();
     await page.waitForURL(/\/sessions\/.+/);
 
     await page.goto("/prepare");
     await page.selectOption("#depotId", depot.id);
+    await page.selectOption("#assignedToId", logistics.id);
     await page.getByRole("button", { name: /préparer la session/i }).click();
 
     // Next.js's App Router always renders its own empty role="alert" route

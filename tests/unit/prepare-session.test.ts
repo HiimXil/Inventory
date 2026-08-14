@@ -21,6 +21,9 @@ const TEST_DEPOTS = [
   { code: "TST-F", name: "Test Depot F" },
   { code: "TST-G", name: "Test Depot G" },
   { code: "TST-H", name: "Test Depot H" },
+  { code: "TST-I", name: "Test Depot I" },
+  { code: "TST-J", name: "Test Depot J" },
+  { code: "TST-K", name: "Test Depot K" },
 ];
 
 let depots: Record<string, { id: string; code: string }>;
@@ -86,11 +89,11 @@ afterEach(() => {
 });
 
 describe("runPrepareSession — success paths", () => {
-  it("creates a PREPARED session + lines + SESSION_CREATED audit log", async () => {
+  it("creates a PREPARED session + lines + SESSION_CREATED audit log, with the assignee recorded (US7)", async () => {
     process.env.ARTIS_FIXTURE = "normal";
     const depot = depots["TST-A"];
 
-    const result = await runPrepareSession(depot.id, actors.ADMIN);
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected success");
@@ -102,6 +105,7 @@ describe("runPrepareSession — success paths", () => {
     expect(session).not.toBeNull();
     expect(session?.status).toBe("PREPARED");
     expect(session?.preparedById).toBe(actors.ADMIN.id);
+    expect(session?.assignedToId).toBe(actors.LOGISTICS.id);
     expect(session?.lines.length).toBe(result.lineCount);
     expect(session?.lines.length).toBeGreaterThan(0);
 
@@ -112,13 +116,14 @@ describe("runPrepareSession — success paths", () => {
     const createdLog = session?.auditLogs.find((l) => l.action === "SESSION_CREATED");
     expect(createdLog).toBeDefined();
     expect(createdLog?.actorId).toBe(actors.ADMIN.id);
+    expect((createdLog?.details as { assignedToId?: string } | null)?.assignedToId).toBe(actors.LOGISTICS.id);
   });
 
   it("aggregates all 24 pages of the large-depot fixture into 1200 lines", async () => {
     process.env.ARTIS_FIXTURE = "paginated";
     const depot = depots["TST-B"];
 
-    const result = await runPrepareSession(depot.id, actors.DEPOT_MANAGER);
+    const result = await runPrepareSession(depot.id, actors.DEPOT_MANAGER, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected success");
@@ -126,6 +131,84 @@ describe("runPrepareSession — success paths", () => {
 
     const lineCount = await prisma.inventoryLine.count({ where: { sessionId: result.sessionId } });
     expect(lineCount).toBe(1200);
+  });
+
+  it("a DEPOT_MANAGER can prepare and assign to a different LOGISTICS user (creator != assignee)", async () => {
+    process.env.ARTIS_FIXTURE = "normal";
+    const depot = depots["TST-I"];
+
+    const result = await runPrepareSession(depot.id, actors.DEPOT_MANAGER, actors.LOGISTICS.id);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    const session = await prisma.inventorySession.findUniqueOrThrow({ where: { id: result.sessionId } });
+    expect(session.preparedById).toBe(actors.DEPOT_MANAGER.id);
+    expect(session.assignedToId).toBe(actors.LOGISTICS.id);
+  });
+
+  it("assigning to an ADMIN or DEPOT_MANAGER (not just LOGISTICS) is allowed — anyone who can count", async () => {
+    process.env.ARTIS_FIXTURE = "normal";
+    const result = await runPrepareSession(depots["TST-J"].id, actors.ADMIN, actors.DEPOT_MANAGER.id);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("runPrepareSession — US7 invalid assignee, no session/insert attempted", () => {
+  it("a nonexistent assignedToId is refused with a distinct, actionable error", async () => {
+    process.env.ARTIS_FIXTURE = "normal";
+    const depot = depots["TST-K"];
+
+    const result = await runPrepareSession(depot.id, actors.ADMIN, "nonexistent-user-id");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toMatch(/introuvable|désactivé|compter/i);
+    // Distinct from the ghost-ACTOR message — this is a rejected assignee,
+    // not an expired/invalid session for the caller themselves.
+    expect(result.error).not.toBe(SESSION_EXPIRED_MESSAGE);
+
+    const sessionCount = await prisma.inventorySession.count({ where: { depotId: depot.id } });
+    expect(sessionCount).toBe(0);
+  });
+
+  it("a disabled user as assignee is refused, no session created", async () => {
+    process.env.ARTIS_FIXTURE = "normal";
+    const depot = depots["TST-A"];
+    const disabledAssignee = await prisma.user.create({
+      data: {
+        email: `disabled-assignee-${Date.now()}@example.com`,
+        passwordHash: "unused",
+        role: "LOGISTICS",
+        disabledAt: new Date(),
+      },
+    });
+
+    try {
+      const result = await runPrepareSession(depot.id, actors.ADMIN, disabledAssignee.id);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected failure");
+      expect(result.error).toMatch(/introuvable|désactivé|compter/i);
+
+      const sessionCount = await prisma.inventorySession.count({ where: { depotId: depot.id } });
+      expect(sessionCount).toBe(0);
+    } finally {
+      await prisma.user.delete({ where: { id: disabledAssignee.id } });
+    }
+  });
+
+  it("a DIRECTION user as assignee is refused — DIRECTION has no COUNT permission", async () => {
+    process.env.ARTIS_FIXTURE = "normal";
+    const depot = depots["TST-B"];
+
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.DIRECTION.id);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toMatch(/introuvable|désactivé|compter/i);
+
+    const sessionCount = await prisma.inventorySession.count({ where: { depotId: depot.id } });
+    expect(sessionCount).toBe(0);
   });
 });
 
@@ -142,7 +225,7 @@ describe("runPrepareSession — import failure modes create nothing", () => {
     setup();
     const depot = depots["TST-C"];
 
-    const result = await runPrepareSession(depot.id, actors.ADMIN);
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -161,7 +244,7 @@ describe("runPrepareSession — import failure modes create nothing", () => {
       getTheoreticalStock: () => new Promise<ArtisStockPage>(() => {}),
     } satisfies ArtisAdapter);
 
-    const result = await runPrepareSession(depot.id, actors.ADMIN, { timeoutMs: 30 });
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id, { timeoutMs: 30 });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -180,7 +263,7 @@ describe("runPrepareSession — import failure modes create nothing", () => {
       },
     } satisfies ArtisAdapter);
 
-    const result = await runPrepareSession(depot.id, actors.ADMIN);
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -199,7 +282,7 @@ describe("runPrepareSession — import failure modes create nothing", () => {
       },
     } satisfies ArtisAdapter);
 
-    const result = await runPrepareSession(depot.id, actors.ADMIN);
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -219,14 +302,14 @@ describe("runPrepareSession — import failure modes create nothing", () => {
             depotCode,
             page: 1,
             pageCount: 3,
-            items: [{ articleRef: "ART-0001", designation: "Article", qty: 5 }],
+            items: [{ articleRef: "ART-0001", designation: "Article", supplierRef: null, qty: 5 }],
           };
         }
         throw new ArtisNetworkError("connection dropped mid-pagination");
       },
     } satisfies ArtisAdapter);
 
-    const result = await runPrepareSession(depot.id, actors.ADMIN);
+    const result = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -243,10 +326,10 @@ describe("runPrepareSession — FR-016 single active session per depot", () => {
     process.env.ARTIS_FIXTURE = "normal";
     const depot = depots["TST-H"];
 
-    const first = await runPrepareSession(depot.id, actors.ADMIN);
+    const first = await runPrepareSession(depot.id, actors.ADMIN, actors.LOGISTICS.id);
     expect(first.ok).toBe(true);
 
-    const second = await runPrepareSession(depot.id, actors.DEPOT_MANAGER);
+    const second = await runPrepareSession(depot.id, actors.DEPOT_MANAGER, actors.LOGISTICS.id);
     expect(second.ok).toBe(false);
     if (second.ok) throw new Error("expected failure");
     expect(second.error).toMatch(/active/i);
@@ -261,7 +344,7 @@ describe("runPrepareSession — RBAC (FR-027)", () => {
     process.env.ARTIS_FIXTURE = "normal";
     const depot = depots["TST-A"];
 
-    const result = await runPrepareSession(depot.id, actors.LOGISTICS);
+    const result = await runPrepareSession(depot.id, actors.LOGISTICS, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     const denied = await prisma.auditLog.findFirst({
@@ -277,7 +360,7 @@ describe("runPrepareSession — RBAC (FR-027)", () => {
     process.env.ARTIS_FIXTURE = "normal";
     const depot = depots["TST-B"];
 
-    const result = await runPrepareSession(depot.id, actors.DIRECTION);
+    const result = await runPrepareSession(depot.id, actors.DIRECTION, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     const denied = await prisma.auditLog.findFirst({
@@ -288,13 +371,13 @@ describe("runPrepareSession — RBAC (FR-027)", () => {
 
   it("allows ADMIN", async () => {
     process.env.ARTIS_FIXTURE = "normal";
-    const result = await runPrepareSession(depots["TST-C"].id, actors.ADMIN);
+    const result = await runPrepareSession(depots["TST-C"].id, actors.ADMIN, actors.LOGISTICS.id);
     expect(result.ok).toBe(true);
   });
 
   it("allows DEPOT_MANAGER", async () => {
     process.env.ARTIS_FIXTURE = "normal";
-    const result = await runPrepareSession(depots["TST-D"].id, actors.DEPOT_MANAGER);
+    const result = await runPrepareSession(depots["TST-D"].id, actors.DEPOT_MANAGER, actors.LOGISTICS.id);
     expect(result.ok).toBe(true);
   });
 });
@@ -305,7 +388,7 @@ describe("runPrepareSession — ghost/disabled actor (Bug B: stale JWT after DB 
     const depot = depots["TST-A"];
     const ghostActor: PrepareSessionActor = { id: "nonexistent-user-id", role: "ADMIN" };
 
-    const result = await runPrepareSession(depot.id, ghostActor);
+    const result = await runPrepareSession(depot.id, ghostActor, actors.LOGISTICS.id);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -331,7 +414,7 @@ describe("runPrepareSession — ghost/disabled actor (Bug B: stale JWT after DB 
     });
 
     try {
-      const result = await runPrepareSession(depot.id, { id: disabledUser.id, role: "ADMIN" });
+      const result = await runPrepareSession(depot.id, { id: disabledUser.id, role: "ADMIN" }, actors.LOGISTICS.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected failure");
@@ -346,7 +429,7 @@ describe("runPrepareSession — ghost/disabled actor (Bug B: stale JWT after DB 
 
   it("a valid, active actor is unaffected (no regression)", async () => {
     process.env.ARTIS_FIXTURE = "normal";
-    const result = await runPrepareSession(depots["TST-C"].id, actors.ADMIN);
+    const result = await runPrepareSession(depots["TST-C"].id, actors.ADMIN, actors.LOGISTICS.id);
     expect(result.ok).toBe(true);
   });
 });
@@ -361,7 +444,7 @@ describe("runPrepareSession — inactive depot exclusion", () => {
     });
 
     try {
-      const result = await runPrepareSession(inactiveDepot.id, actors.ADMIN);
+      const result = await runPrepareSession(inactiveDepot.id, actors.ADMIN, actors.LOGISTICS.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected failure");

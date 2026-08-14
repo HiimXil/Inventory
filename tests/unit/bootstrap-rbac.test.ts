@@ -7,6 +7,7 @@ import { GET as bootstrapGet } from "../../app/api/sessions/[id]/bootstrap/route
 import { authenticateWithCredentials } from "../../lib/auth/credentials-login";
 import { prisma } from "../../lib/db/client";
 import { runPrepareSession } from "../../lib/sessions/prepare-session";
+import { createUser } from "../../lib/admin/users";
 
 const SEED_PASSWORD = "Password123!";
 const DEPOT = { code: "BOOTSTRAP-RBAC-A", name: "Bootstrap RBAC Depot" };
@@ -30,9 +31,14 @@ async function callBootstrap(sessionId: string, cookieHeader: string | null) {
 
 let depotId: string;
 
+// US7: bootstrap now scopes LOGISTICS to the session's assignee, so the
+// shared test session below is always assigned to logistics@example.com —
+// keeps the existing "allows %s" matrix meaningful for all three roles
+// (ADMIN/DEPOT_MANAGER unrestricted, LOGISTICS happens to be the assignee).
 async function prepareTestSession() {
   const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
-  const outcome = await runPrepareSession(depotId, { id: admin.id, role: "ADMIN" });
+  const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+  const outcome = await runPrepareSession(depotId, { id: admin.id, role: "ADMIN" }, logistics.id);
   if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
   return outcome.sessionId;
 }
@@ -99,5 +105,34 @@ describe("GET /api/sessions/[id]/bootstrap — RBAC (COUNT, FR-027/FR-028)", () 
       where: { sessionId, actorId: null, action: "BOOTSTRAP_DENIED" },
     });
     expect(denied).not.toBeNull();
+  });
+});
+
+describe("GET /api/sessions/[id]/bootstrap — LOGISTICS scoped to the assignee (US7, new gate)", () => {
+  it("denies a LOGISTICS user who is not the session's assignee (403) and journalizes it", async () => {
+    const sessionId = await prepareTestSession(); // assigned to logistics@example.com
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const otherLogisticsEmail = `bootstrap-other-logistics-${Date.now()}@example.com`;
+    const created = await createUser(
+      { id: admin.id, role: "ADMIN" },
+      { email: otherLogisticsEmail, role: "LOGISTICS", password: SEED_PASSWORD },
+    );
+    if (!created.ok) throw new Error(created.error);
+
+    try {
+      const cookie = await cookiesFor(otherLogisticsEmail);
+
+      const response = await callBootstrap(sessionId, cookie);
+
+      expect(response.status).toBe(403);
+
+      const denied = await prisma.auditLog.findFirst({
+        where: { sessionId, actorId: created.userId, action: "BOOTSTRAP_DENIED" },
+      });
+      expect(denied).not.toBeNull();
+    } finally {
+      await prisma.auditLog.deleteMany({ where: { actorId: created.userId } });
+      await prisma.user.delete({ where: { id: created.userId } });
+    }
   });
 });

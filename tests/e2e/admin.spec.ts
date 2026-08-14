@@ -24,7 +24,7 @@ test.describe("US6 — administration", () => {
 
     process.env.ARTIS_MODE = "mock";
     process.env.ARTIS_FIXTURE = "normal";
-    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, admin.id);
     if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
     sessionIdToCancel = outcome.sessionId;
   });

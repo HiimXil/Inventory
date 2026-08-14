@@ -56,8 +56,8 @@ afterEach(() => {
   delete process.env.ARTIS_FIXTURE;
 });
 
-async function prepareTestSession() {
-  const outcome = await runPrepareSession(depotId, actors.ADMIN);
+async function prepareTestSession(assignedToId: string = actors.LOGISTICS.id) {
+  const outcome = await runPrepareSession(depotId, actors.ADMIN, assignedToId);
   if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
   return outcome.sessionId;
 }
@@ -99,14 +99,9 @@ describe("loadSessionForView — RBAC (RUNBOOK correctif for /sessions/[id])", (
   );
 });
 
-describe("loadSessionForView — LOGISTICS scoped to their own session (FR-027)", () => {
-  it("allows LOGISTICS to view a session they synced", async () => {
-    const sessionId = await prepareTestSession();
-    const syncOutcome = await runSyncSession(sessionId, actors.LOGISTICS as SyncSessionActor, {
-      clientUpdatedAt: new Date().toISOString(),
-      lines: [{ articleRef: "ART-001", countedQty: 1, isOffReferential: false }],
-    });
-    expect(syncOutcome.ok && syncOutcome.applied).toBe(true);
+describe("loadSessionForView — LOGISTICS scoped to the session assigned to them (US7, replaces the old sync-based rule)", () => {
+  it("allows LOGISTICS to view a session assigned to them, even before it's ever been synced", async () => {
+    const sessionId = await prepareTestSession(actors.LOGISTICS.id);
 
     const outcome = await loadSessionForView(sessionId, actors.LOGISTICS as ViewSessionActor);
 
@@ -115,11 +110,12 @@ describe("loadSessionForView — LOGISTICS scoped to their own session (FR-027)"
     expect(outcome.session.id).toBe(sessionId);
   });
 
-  it("denies LOGISTICS viewing a session synced by someone else, and journalizes it", async () => {
-    const sessionId = await prepareTestSession();
-    // A different LOGISTICS-permitted actor (ADMIN here) is the one who
-    // actually synced this session — our LOGISTICS actor has no claim to it.
-    const syncOutcome = await runSyncSession(sessionId, actors.ADMIN as SyncSessionActor, {
+  it("denies LOGISTICS viewing a session assigned to someone else — even one they synced themselves", async () => {
+    const sessionId = await prepareTestSession(actors.DEPOT_MANAGER.id);
+    // Assigned to DEPOT_MANAGER, but our LOGISTICS actor is the one who
+    // physically syncs it — the old audit-log-derived rule would have
+    // called this "theirs"; assignment alone decides now.
+    const syncOutcome = await runSyncSession(sessionId, actors.LOGISTICS as SyncSessionActor, {
       clientUpdatedAt: new Date().toISOString(),
       lines: [{ articleRef: "ART-001", countedQty: 1, isOffReferential: false }],
     });
@@ -137,13 +133,26 @@ describe("loadSessionForView — LOGISTICS scoped to their own session (FR-027)"
     expect(denied).not.toBeNull();
   });
 
-  it("denies LOGISTICS viewing a session that was never synced by anyone", async () => {
-    const sessionId = await prepareTestSession();
+  it("denies LOGISTICS viewing a session assigned to someone else and never touched by them at all", async () => {
+    const sessionId = await prepareTestSession(actors.ADMIN.id);
 
     const outcome = await loadSessionForView(sessionId, actors.LOGISTICS as ViewSessionActor);
 
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.reason).toBe("forbidden");
+  });
+
+  it("backward compat: a session with no assignee at all (assignedToId null) is invisible to LOGISTICS but visible to ADMIN", async () => {
+    const sessionId = await prepareTestSession(actors.LOGISTICS.id);
+    await prisma.inventorySession.update({ where: { id: sessionId }, data: { assignedToId: null } });
+
+    const logisticsOutcome = await loadSessionForView(sessionId, actors.LOGISTICS as ViewSessionActor);
+    expect(logisticsOutcome.ok).toBe(false);
+    if (logisticsOutcome.ok) return;
+    expect(logisticsOutcome.reason).toBe("forbidden");
+
+    const adminOutcome = await loadSessionForView(sessionId, actors.ADMIN as ViewSessionActor);
+    expect(adminOutcome.ok).toBe(true);
   });
 });

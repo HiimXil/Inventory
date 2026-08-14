@@ -20,6 +20,7 @@ const TEST_DEPOTS = [
 let depots: Record<string, { id: string }>;
 let admin: PrepareSessionActor;
 let direction: PrepareSessionActor;
+let logistics: PrepareSessionActor;
 
 async function resetSessionData() {
   await prisma.auditLog.deleteMany({});
@@ -36,8 +37,10 @@ beforeAll(async () => {
 
   const adminUser = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
   const directionUser = await prisma.user.findUniqueOrThrow({ where: { email: "direction@example.com" } });
+  const logisticsUser = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
   admin = { id: adminUser.id, role: "ADMIN" };
   direction = { id: directionUser.id, role: "DIRECTION" };
+  logistics = { id: logisticsUser.id, role: "LOGISTICS" };
 });
 
 afterAll(async () => {
@@ -65,7 +68,7 @@ afterEach(() => {
  */
 describe("DIRECTION — read-only across every mutation", () => {
   it("cannot prepare a session", async () => {
-    const outcome = await runPrepareSession(depots["DIRECTION-RO-A"].id, direction);
+    const outcome = await runPrepareSession(depots["DIRECTION-RO-A"].id, direction, logistics.id);
     expect(outcome.ok).toBe(false);
 
     const denied = await prisma.auditLog.findFirst({
@@ -75,7 +78,7 @@ describe("DIRECTION — read-only across every mutation", () => {
   });
 
   it("cannot bootstrap/count a session", async () => {
-    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-A"].id, admin);
+    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-A"].id, admin, logistics.id);
     expect(prepareOutcome.ok).toBe(true);
     if (!prepareOutcome.ok) return;
 
@@ -98,7 +101,7 @@ describe("DIRECTION — read-only across every mutation", () => {
   });
 
   it("cannot sync a session", async () => {
-    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-A"].id, admin);
+    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-A"].id, admin, logistics.id);
     expect(prepareOutcome.ok).toBe(true);
     if (!prepareOutcome.ok) return;
 
@@ -115,7 +118,7 @@ describe("DIRECTION — read-only across every mutation", () => {
   });
 
   it("cannot close a session", async () => {
-    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-B"].id, admin);
+    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-B"].id, admin, logistics.id);
     expect(prepareOutcome.ok).toBe(true);
     if (!prepareOutcome.ok) return;
     const syncOutcome = await runSyncSession(prepareOutcome.sessionId, admin as SyncSessionActor, {
@@ -134,7 +137,7 @@ describe("DIRECTION — read-only across every mutation", () => {
   });
 
   it("cannot cancel a session", async () => {
-    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-C"].id, admin);
+    const prepareOutcome = await runPrepareSession(depots["DIRECTION-RO-C"].id, admin, logistics.id);
     expect(prepareOutcome.ok).toBe(true);
     if (!prepareOutcome.ok) return;
 

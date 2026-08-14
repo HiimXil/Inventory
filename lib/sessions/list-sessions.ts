@@ -2,7 +2,6 @@ import type { Depot, InventorySession, SessionStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { requirePermission } from "@/lib/auth/guards";
 import type { UserRole } from "@/lib/auth/roles";
-import { resolveLogisticsOwnerId } from "./view-session";
 import { buildDiscrepancyLines, summarizeDiscrepancies } from "@/lib/offline/discrepancy";
 
 export type ListSessionsActor = { id: string; role: UserRole } | null;
@@ -29,10 +28,11 @@ const ACTIVE_STATUS_WEIGHT: Partial<Record<SessionStatus, number>> = { SYNCED: 0
 
 /**
  * Read side of /sessions (liste). Mirrors loadSessionForView's RBAC gate and
- * LOGISTICS-ownership scoping (FR-027) applied to a findMany instead of a
- * single lookup — same VIEW_RESULTS permission, same "owner = actor on the
- * session's latest SESSION_SYNCED audit entry" rule, no new permission or
- * ownership concept introduced.
+ * LOGISTICS-ownership scoping (FR-027/US7) — same VIEW_RESULTS permission,
+ * same "own" rule (assignedToId === actor.id), no new permission concept
+ * introduced. Scoped directly in the query rather than fetched-then-filtered
+ * (assignedToId lives on InventorySession itself, no separate lookup needed
+ * now that attribution replaces the old audit-log-derived ownership).
  */
 export async function listSessionsForUser(actor: ListSessionsActor): Promise<ListSessionsOutcome> {
   try {
@@ -49,19 +49,12 @@ export async function listSessionsForUser(actor: ListSessionsActor): Promise<Lis
   }
 
   const sessions = await prisma.inventorySession.findMany({
+    where: actor!.role === "LOGISTICS" ? { assignedToId: actor!.id } : undefined,
     orderBy: { createdAt: "desc" },
     include: { depot: true },
   });
 
-  let scoped: (InventorySession & { depot: Depot })[] = sessions;
-  if (actor!.role === "LOGISTICS") {
-    const withOwner = await Promise.all(
-      sessions.map(async (session) => ({ session, ownerId: await resolveLogisticsOwnerId(session.id) })),
-    );
-    scoped = withOwner.filter((entry) => entry.ownerId === actor!.id).map((entry) => entry.session);
-  }
-
-  const items = await Promise.all(scoped.map(toListItem));
+  const items = await Promise.all(sessions.map(toListItem));
 
   return { ok: true, sessions: sortForList(items) };
 }

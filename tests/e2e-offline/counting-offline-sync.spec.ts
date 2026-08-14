@@ -45,15 +45,19 @@ test.describe("US4 — sync on network return (production build)", () => {
       create: DEPOT_RETRY,
     });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
 
     process.env.ARTIS_MODE = "mock";
     process.env.ARTIS_FIXTURE = "normal";
 
-    const autoOutcome = await runPrepareSession(depotAuto.id, { id: admin.id, role: "ADMIN" });
+    // Both assigned to logistics@example.com (US7) — that's who logs in
+    // below to count; bootstrap now scopes LOGISTICS to the session's
+    // assignee.
+    const autoOutcome = await runPrepareSession(depotAuto.id, { id: admin.id, role: "ADMIN" }, logistics.id);
     if (!autoOutcome.ok) throw new Error(`prepare failed in test setup: ${autoOutcome.error}`);
     sessionIdAuto = autoOutcome.sessionId;
 
-    const retryOutcome = await runPrepareSession(depotRetry.id, { id: admin.id, role: "ADMIN" });
+    const retryOutcome = await runPrepareSession(depotRetry.id, { id: admin.id, role: "ADMIN" }, logistics.id);
     if (!retryOutcome.ok) throw new Error(`prepare failed in test setup: ${retryOutcome.error}`);
     sessionIdRetry = retryOutcome.sessionId;
   });

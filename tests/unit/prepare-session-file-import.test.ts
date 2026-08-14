@@ -6,9 +6,13 @@ import { prisma } from "../../lib/db/client";
 import { runPrepareSession, type PrepareSessionActor } from "../../lib/sessions/prepare-session";
 
 const FIXTURE_PATH = path.join(__dirname, "../fixtures/artis-export-example.xlsx");
+// Must match the "Code dépôt" baked into the fixture (US8 new format) — the
+// happy-path test below selects this exact depot so the new depot-check
+// doesn't reject it.
+const FIXTURE_DEPOT_CODE = "FIXTURE-DEPOT";
 
 const TEST_DEPOTS = [
-  { code: "FILE-IMPORT-A", name: "File Import Depot A" },
+  { code: FIXTURE_DEPOT_CODE, name: "File Import Fixture Depot" },
   { code: "FILE-IMPORT-B", name: "File Import Depot B" },
   { code: "FILE-IMPORT-C", name: "File Import Depot C" },
 ];
@@ -28,8 +32,8 @@ async function realFixtureBuffer(): Promise<Buffer> {
 
 async function invalidWorkbookBuffer(rows: Array<Array<string | number | null>>): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("a_Article");
-  sheet.addRow(["Code", "", "Référence", "Libellé", "Empl", "Stock physique"]);
+  const sheet = workbook.addWorksheet("a_ResultatsRecherche");
+  sheet.addRow(["Code art.", "Libellé art.", "Référence fournisseur", "Qté en Stock", "Code dépôt"]);
   for (const row of rows) sheet.addRow(row);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
@@ -61,9 +65,9 @@ afterEach(() => {
   delete process.env.ARTIS_FIXTURE;
 });
 
-describe("runPrepareSession — ARTIS_MODE=file, real export (primary import path)", () => {
-  it("creates a PREPARED session with 98 lines, theoreticalQty from Stock physique (not Qté théorique)", async () => {
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-A"].id, admin, {
+describe("runPrepareSession — ARTIS_MODE=file, real export (primary import path, US8 new format)", () => {
+  it("creates a PREPARED session with 98 lines, theoreticalQty from Qté en Stock, supplierRef carried through", async () => {
+    const outcome = await runPrepareSession(depots[FIXTURE_DEPOT_CODE].id, admin, admin.id, {
       fileBuffer: await realFixtureBuffer(),
     });
 
@@ -81,21 +85,22 @@ describe("runPrepareSession — ARTIS_MODE=file, real export (primary import pat
     const line = session?.lines.find((l) => l.articleRef === "DEMO-0001");
     expect(line?.designation).toBe("Article de démonstration (filtre)");
     expect(line?.theoreticalQty).toBe(9);
-    expect(line?.theoreticalQty).not.toBe(8);
+    expect(line?.supplierRef).toBe("R-0001");
 
     const noRefLine = session?.lines.find((l) => l.articleRef === "DEMO-0002");
     expect(noRefLine).toBeDefined();
+    expect(noRefLine?.supplierRef).toBeNull();
   });
 });
 
 describe("runPrepareSession — ARTIS_MODE=file, rejections create no session", () => {
-  it("refuses a duplicated Code", async () => {
+  it("refuses a duplicated Code art.", async () => {
     const buffer = await invalidWorkbookBuffer([
-      ["F000001", null, "000001", "First", null, 1],
-      ["F000001", null, "000002", "Duplicate", null, 2],
+      ["F000001", "First", "000001", 1, "FILE-IMPORT-B"],
+      ["F000001", "Duplicate", "000002", 2, "FILE-IMPORT-B"],
     ]);
 
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, { fileBuffer: buffer });
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, admin.id, { fileBuffer: buffer });
 
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
@@ -106,20 +111,20 @@ describe("runPrepareSession — ARTIS_MODE=file, rejections create no session", 
   });
 
   it("refuses a negative quantity", async () => {
-    const buffer = await invalidWorkbookBuffer([["F000001", null, "000001", "Negative", null, -1]]);
+    const buffer = await invalidWorkbookBuffer([["F000001", "Negative", "000001", -1, "FILE-IMPORT-B"]]);
 
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, { fileBuffer: buffer });
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, admin.id, { fileBuffer: buffer });
 
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.error).toMatch(/négatif/);
+    expect(outcome.error).toMatch(/négative/);
 
     const count = await prisma.inventorySession.count({ where: { depotId: depots["FILE-IMPORT-B"].id } });
     expect(count).toBe(0);
   });
 
   it("refuses a non-.xlsx file", async () => {
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, {
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, admin.id, {
       fileBuffer: Buffer.from("not an xlsx"),
     });
 
@@ -132,7 +137,7 @@ describe("runPrepareSession — ARTIS_MODE=file, rejections create no session", 
   });
 
   it("refuses an empty file", async () => {
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, {
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, admin.id, {
       fileBuffer: Buffer.alloc(0),
     });
 
@@ -145,26 +150,57 @@ describe("runPrepareSession — ARTIS_MODE=file, rejections create no session", 
 
   it("refuses missing required columns, naming them", async () => {
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("a_Article");
-    sheet.addRow(["Code", "Libellé"]);
-    sheet.addRow(["F000001", "Missing Stock physique column"]);
+    const sheet = workbook.addWorksheet("a_ResultatsRecherche");
+    sheet.addRow(["Code art.", "Libellé art."]);
+    sheet.addRow(["F000001", "Missing Qté en Stock and Code dépôt columns"]);
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-C"].id, admin, { fileBuffer: buffer });
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-C"].id, admin, admin.id, { fileBuffer: buffer });
 
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.error).toMatch(/Stock physique/);
+    expect(outcome.error).toMatch(/Qté en Stock/);
+    expect(outcome.error).toMatch(/Code dépôt/);
 
     const count = await prisma.inventorySession.count({ where: { depotId: depots["FILE-IMPORT-C"].id } });
     expect(count).toBe(0);
   });
 
   it("refuses when no file is provided at all in file mode", async () => {
-    const outcome = await runPrepareSession(depots["FILE-IMPORT-C"].id, admin, {});
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-C"].id, admin, admin.id, {});
 
     expect(outcome.ok).toBe(false);
     const count = await prisma.inventorySession.count({ where: { depotId: depots["FILE-IMPORT-C"].id } });
+    expect(count).toBe(0);
+  });
+
+  it("refuses a file whose depot code doesn't match the depot selected in the UI", async () => {
+    const buffer = await invalidWorkbookBuffer([["F000001", "Wrong depot", "000001", 5, "SOME-OTHER-DEPOT"]]);
+
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-C"].id, admin, admin.id, { fileBuffer: buffer });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toMatch(/concerne le dépôt SOME-OTHER-DEPOT/);
+    expect(outcome.error).toMatch(new RegExp(`sélectionné ${depots["FILE-IMPORT-C"].code}`));
+
+    const count = await prisma.inventorySession.count({ where: { depotId: depots["FILE-IMPORT-C"].id } });
+    expect(count).toBe(0);
+  });
+
+  it("refuses a file mixing several depot codes", async () => {
+    const buffer = await invalidWorkbookBuffer([
+      ["F000001", "Row A", "000001", 1, "FILE-IMPORT-B"],
+      ["F000002", "Row B", "000002", 2, "FILE-IMPORT-C"],
+    ]);
+
+    const outcome = await runPrepareSession(depots["FILE-IMPORT-B"].id, admin, admin.id, { fileBuffer: buffer });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toMatch(/mélange plusieurs dépôts/);
+
+    const count = await prisma.inventorySession.count({ where: { depotId: depots["FILE-IMPORT-B"].id } });
     expect(count).toBe(0);
   });
 });

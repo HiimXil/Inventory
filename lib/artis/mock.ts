@@ -8,14 +8,15 @@ const NORMAL_DEPOTS: ArtisDepot[] = [
 ];
 
 const NORMAL_LINES = [
-  { articleRef: "ART-001", designation: "Imprimante UV", qty: 12 },
-  { articleRef: "ART-002", designation: "Encre cyan", qty: 48 },
-  { articleRef: "ART-003", designation: "Plaque aluminium", qty: 24 },
+  { articleRef: "ART-001", designation: "Imprimante UV", supplierRef: null, qty: 12 },
+  { articleRef: "ART-002", designation: "Encre cyan", supplierRef: null, qty: 48 },
+  { articleRef: "ART-003", designation: "Plaque aluminium", supplierRef: null, qty: 24 },
 ];
 
 const LARGE_LINES = Array.from({ length: 1200 }, (_, index) => ({
   articleRef: `ART-${(1000 + index).toString().padStart(4, "0")}`,
   designation: `Article grand volume ${index + 1}`,
+  supplierRef: null,
   qty: 10 + (index % 5),
 }));
 

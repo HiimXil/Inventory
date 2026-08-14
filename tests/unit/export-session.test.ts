@@ -23,7 +23,7 @@ async function resetSessionData() {
 }
 
 async function prepareOnlySession(depotCode: string) {
-  const outcome = await runPrepareSession(depots[depotCode].id, actors.ADMIN);
+  const outcome = await runPrepareSession(depots[depotCode].id, actors.ADMIN, actors.LOGISTICS.id);
   if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
   return outcome.sessionId;
 }

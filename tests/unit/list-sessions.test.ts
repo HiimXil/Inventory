@@ -56,8 +56,8 @@ afterEach(() => {
   delete process.env.ARTIS_FIXTURE;
 });
 
-async function prepareTestSession() {
-  const outcome = await runPrepareSession(depotId, actors.ADMIN);
+async function prepareTestSession(assignedToId: string = actors.LOGISTICS.id) {
+  const outcome = await runPrepareSession(depotId, actors.ADMIN, assignedToId);
   if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
   return outcome.sessionId;
 }
@@ -101,10 +101,9 @@ describe("listSessionsForUser — RBAC (mirrors loadSessionForView, FR-027)", ()
   );
 });
 
-describe("listSessionsForUser — LOGISTICS scoped to sessions they synced (FR-027)", () => {
-  it("includes a session this LOGISTICS actor synced", async () => {
-    const sessionId = await prepareTestSession();
-    await syncTestSession(sessionId, actors.LOGISTICS);
+describe("listSessionsForUser — LOGISTICS scoped to sessions assigned to them (US7, replaces the old sync-based rule)", () => {
+  it("includes a session assigned to this LOGISTICS actor, even before it's ever been synced", async () => {
+    const sessionId = await prepareTestSession(actors.LOGISTICS.id);
 
     const outcome = await listSessionsForUser(actors.LOGISTICS as ListSessionsActor);
 
@@ -113,9 +112,24 @@ describe("listSessionsForUser — LOGISTICS scoped to sessions they synced (FR-0
     expect(outcome.sessions.map((s) => s.id)).toContain(sessionId);
   });
 
-  it("excludes a session synced by a different actor", async () => {
-    const sessionId = await prepareTestSession();
-    await syncTestSession(sessionId, actors.ADMIN);
+  it("excludes a session assigned to a different user — even one this LOGISTICS actor synced themselves", async () => {
+    // Prepared for and assigned to DEPOT_MANAGER (a valid assignee, not this
+    // LOGISTICS actor), but our LOGISTICS actor is the one who physically
+    // syncs it — the old audit-log-derived rule would have called this
+    // "theirs"; the point of US7 is that assignment alone decides now.
+    const prepOutcome = await runPrepareSession(depots["LIST-A-2"].id, actors.ADMIN, actors.DEPOT_MANAGER.id);
+    if (!prepOutcome.ok) throw new Error("prepare failed in test setup");
+    await syncTestSession(prepOutcome.sessionId, actors.LOGISTICS);
+
+    const outcome = await listSessionsForUser(actors.LOGISTICS as ListSessionsActor);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.sessions.map((s) => s.id)).not.toContain(prepOutcome.sessionId);
+  });
+
+  it("excludes a session assigned to someone else and never touched by this actor at all", async () => {
+    const sessionId = await prepareTestSession(actors.ADMIN.id);
 
     const outcome = await listSessionsForUser(actors.LOGISTICS as ListSessionsActor);
 
@@ -124,14 +138,23 @@ describe("listSessionsForUser — LOGISTICS scoped to sessions they synced (FR-0
     expect(outcome.sessions.map((s) => s.id)).not.toContain(sessionId);
   });
 
-  it("excludes a session that was never synced by anyone", async () => {
-    const sessionId = await prepareTestSession();
+  it("backward compat: a session with no assignee at all (assignedToId null) is invisible to LOGISTICS", async () => {
+    const sessionId = await prepareTestSession(actors.LOGISTICS.id);
+    await prisma.inventorySession.update({ where: { id: sessionId }, data: { assignedToId: null } });
 
     const outcome = await listSessionsForUser(actors.LOGISTICS as ListSessionsActor);
 
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.sessions.map((s) => s.id)).not.toContain(sessionId);
+
+    // ...but ADMIN/DEPOT_MANAGER/DIRECTION still see it unconditionally —
+    // exactly the documented backward-compat behavior (visible only to
+    // roles that already see everything, until explicitly assigned).
+    const adminOutcome = await listSessionsForUser(actors.ADMIN as ListSessionsActor);
+    expect(adminOutcome.ok).toBe(true);
+    if (!adminOutcome.ok) return;
+    expect(adminOutcome.sessions.map((s) => s.id)).toContain(sessionId);
   });
 });
 
@@ -169,11 +192,11 @@ describe("listSessionsForUser — écart counts and ordering", () => {
     const closeOutcome = await runCloseSession(closedSessionId, actors.ADMIN as CloseSessionActor);
     expect(closeOutcome.ok).toBe(true);
 
-    const preparedOutcome = await runPrepareSession(depots["LIST-A-2"].id, actors.ADMIN);
+    const preparedOutcome = await runPrepareSession(depots["LIST-A-2"].id, actors.ADMIN, actors.LOGISTICS.id);
     if (!preparedOutcome.ok) throw new Error("prepare failed in test setup");
     const preparedSessionId = preparedOutcome.sessionId;
 
-    const syncedOutcome = await runPrepareSession(depots["LIST-A-3"].id, actors.ADMIN);
+    const syncedOutcome = await runPrepareSession(depots["LIST-A-3"].id, actors.ADMIN, actors.LOGISTICS.id);
     if (!syncedOutcome.ok) throw new Error("prepare failed in test setup");
     const syncedSessionId = syncedOutcome.sessionId;
     await syncTestSession(syncedSessionId, actors.ADMIN);

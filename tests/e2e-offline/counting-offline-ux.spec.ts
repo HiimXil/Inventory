@@ -39,11 +39,14 @@ test.describe("US2/US3 — counting screen UX: progress, filter, pending sync", 
   test.beforeAll(async () => {
     const depot = await prisma.depot.upsert({ where: { code: DEPOT.code }, update: {}, create: DEPOT });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
 
     process.env.ARTIS_MODE = "mock";
     // ART-001 Imprimante UV (théo. 12), ART-002 Encre cyan (48), ART-003 Plaque aluminium (24).
     process.env.ARTIS_FIXTURE = "normal";
-    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    // Assigned to logistics@example.com (US7) — that's who logs in below to
+    // count; bootstrap now scopes LOGISTICS to the session's assignee.
+    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, logistics.id);
     if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
     sessionId = outcome.sessionId;
   });

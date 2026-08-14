@@ -32,10 +32,13 @@ test.describe("US3 — offline discrepancy view (production build, FR-006)", () 
   test.beforeAll(async () => {
     const depot = await prisma.depot.upsert({ where: { code: DEPOT.code }, update: {}, create: DEPOT });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
 
     process.env.ARTIS_MODE = "mock";
     process.env.ARTIS_FIXTURE = "normal"; // ART-001 (12), ART-002 (48), ART-003 (24)
-    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    // Assigned to logistics@example.com (US7) — that's who logs in below to
+    // count; bootstrap now scopes LOGISTICS to the session's assignee.
+    const outcome = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, logistics.id);
     if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
     sessionId = outcome.sessionId;
   });

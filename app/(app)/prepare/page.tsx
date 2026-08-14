@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/client";
 import { resolveArtisMode } from "@/lib/artis/factory";
 import { requirePageSession } from "@/lib/auth/require-page-session";
+import { listAssignableUsers } from "@/lib/sessions/assignable-users";
 import { AppShell } from "@/components/layout/AppShell";
 import { AccountMenu } from "@/components/layout/AccountMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -18,6 +19,7 @@ export default async function PrepareSessionPage() {
     orderBy: { code: "asc" },
     select: { id: true, code: true, name: true },
   });
+  const assignableUsers = await listAssignableUsers();
   const requiresFile = resolveArtisMode() === "file";
 
   return (
@@ -36,7 +38,7 @@ export default async function PrepareSessionPage() {
             description="Aucun dépôt actif n'est configuré pour le moment. Contactez un administrateur pour en activer un avant de préparer une session."
           />
         ) : (
-          <DepotSelector depots={depots} requiresFile={requiresFile} />
+          <DepotSelector depots={depots} assignableUsers={assignableUsers} requiresFile={requiresFile} />
         )}
       </div>
     </AppShell>

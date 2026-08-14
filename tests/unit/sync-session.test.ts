@@ -23,7 +23,11 @@ async function resetSessionData() {
 }
 
 async function prepareTestSession(depotCode: string, actor: PrepareSessionActor) {
-  const outcome = await runPrepareSession(depots[depotCode].id, actor);
+  // Sync itself isn't scoped by assignment (non-regression) — any
+  // COUNT-permitted actor can sync any session, unrestricted — so the
+  // assignee below is just a valid placeholder, not something these tests
+  // depend on.
+  const outcome = await runPrepareSession(depots[depotCode].id, actor, actors.LOGISTICS.id);
   if (!outcome.ok) throw new Error(`prepare failed in test setup: ${outcome.error}`);
   return outcome.sessionId;
 }

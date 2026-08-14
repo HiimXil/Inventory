@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
-import { requirePermission } from "@/lib/auth/guards";
+import { requirePermission, assertOwnsSession } from "@/lib/auth/guards";
 import { getServerAuthSessionFromRequest } from "@/lib/auth/session";
 
 /**
@@ -39,6 +39,27 @@ export async function GET(
       { error: authSession ? "Accès refusé." : "Authentification requise." },
       { status: authSession ? 403 : 401 },
     );
+  }
+
+  // US7: bootstrap had no per-session ownership check at all before
+  // attribution existed (COUNT alone let any LOGISTICS/DEPOT_MANAGER/ADMIN
+  // download any session's snapshot) — now scoped exactly like
+  // /sessions/[id] and the list: LOGISTICS only reaches a session assigned
+  // to them, everyone else with COUNT is unrestricted.
+  if (authSession!.user.role === "LOGISTICS") {
+    try {
+      assertOwnsSession(authSession!.user.role, sessionRecord.assignedToId ?? "", authSession!.user.id);
+    } catch {
+      await prisma.auditLog.create({
+        data: {
+          actorId: authSession!.user.id,
+          action: "BOOTSTRAP_DENIED",
+          details: { sessionId: id, attemptedRole: authSession!.user.role, reason: "not-assigned" },
+          sessionId: id,
+        },
+      });
+      return NextResponse.json({ error: "Accès refusé." }, { status: 403 });
+    }
   }
 
   const lines = await prisma.inventoryLine.findMany({

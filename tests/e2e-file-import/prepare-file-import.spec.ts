@@ -4,7 +4,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { prisma } from "../../lib/db/client";
 
 const SEED_PASSWORD = "Password123!";
-const DEPOT = { code: "E2E-FILE-IMPORT", name: "E2E File Import Depot" };
+// Must match the "Code dépôt" baked into the fixture (US8 new format) — the
+// real file upload below is checked against whatever depot is selected.
+const DEPOT = { code: "FIXTURE-DEPOT", name: "E2E File Import Depot" };
 const DEPOT_INVALID = { code: "E2E-FILE-IMPORT-BAD", name: "E2E File Import Depot (invalid file case)" };
 const FIXTURE_PATH = path.join(__dirname, "../fixtures/artis-export-example.xlsx");
 
@@ -53,7 +55,10 @@ test.describe("US1 (file mode) — prepare session from a real ARTIS export", ()
     await expect(fileInput).toBeVisible();
     await expect(fileInput).toHaveAttribute("required", "");
 
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
     await page.selectOption("#depotId", { label: `${DEPOT.code} — ${DEPOT.name}` });
+    await page.selectOption("#assignedToId", logistics.id);
     await fileInput.setInputFiles(FIXTURE_PATH);
     await page.getByRole("button", { name: /préparer la session/i }).click();
 
@@ -71,8 +76,8 @@ test.describe("US1 (file mode) — prepare session from a real ARTIS export", ()
 
     const witness = session.lines.find((l) => l.articleRef === "DEMO-0001");
     expect(witness?.designation).toBe("Article de démonstration (filtre)");
-    // Stock physique (9), never Qté théorique (8).
     expect(witness?.theoreticalQty).toBe(9);
+    expect(witness?.supplierRef).toBe("R-0001");
   });
 
   test("an invalid file is rejected with an explicit error, retry available, no session created", async ({
@@ -86,8 +91,11 @@ test.describe("US1 (file mode) — prepare session from a real ARTIS export", ()
 
     await page.goto("/prepare");
 
+    const logistics = await prisma.user.findUniqueOrThrow({ where: { email: "logistics@example.com" } });
+
     const fileInput = page.locator('input[name="artisFile"]');
     await page.selectOption("#depotId", { label: `${DEPOT_INVALID.code} — ${DEPOT_INVALID.name}` });
+    await page.selectOption("#assignedToId", logistics.id);
     await fileInput.setInputFiles({
       name: "invalid.xlsx",
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

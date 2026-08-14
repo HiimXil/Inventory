@@ -2,29 +2,22 @@ import { prisma } from "@/lib/db/client";
 
 /**
  * Best-effort "does this LOGISTICS user have a session still open" check for
- * the post-login redirect (FR-026 navigation pass §4). Reuses the same
- * signal as resolveLogisticsOwnerId (lib/sessions/view-session.ts) — the
- * actor on a session's latest SESSION_SYNCED audit entry — since that's the
- * only server-visible link between a LOGISTICS user and a session at all
- * (they can't prepare one, and bootstrap doesn't log on success). This can
- * only ever find a session they've synced at least once; a session that's
- * still PREPARED and never synced exists solely in that device's
- * IndexedDB, which the server has no way to see — that case is handled
- * client-side by ResumeSessionsBanner instead.
+ * the post-login redirect (FR-026 navigation pass §4). US7: now resolved
+ * from attribution (InventorySession.assignedToId) rather than the actor on
+ * a SESSION_SYNCED audit entry — the old signal required having synced at
+ * least once; assignment is known to the server from the moment the session
+ * is prepared, before the assignee has ever opened it. Deliberately still
+ * scoped to status SYNCED only, matching the old function's exact
+ * behavior — a PREPARED-and-never-opened session isn't "resume", that's
+ * just "start"; this redirect is specifically for jumping back into
+ * something already underway. Picks the most recently updated match if
+ * more than one SYNCED session happens to be assigned to the same user.
  */
 export async function findActiveSyncedSessionForLogistics(userId: string): Promise<string | null> {
-  const syncLog = await prisma.auditLog.findFirst({
-    where: { action: "SESSION_SYNCED", actorId: userId },
-    orderBy: { createdAt: "desc" },
-    select: { sessionId: true },
+  const session = await prisma.inventorySession.findFirst({
+    where: { assignedToId: userId, status: "SYNCED" },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true },
   });
-  if (!syncLog?.sessionId) return null;
-
-  const session = await prisma.inventorySession.findUnique({
-    where: { id: syncLog.sessionId },
-    select: { id: true, status: true },
-  });
-  if (!session || session.status !== "SYNCED") return null;
-
-  return session.id;
+  return session?.id ?? null;
 }

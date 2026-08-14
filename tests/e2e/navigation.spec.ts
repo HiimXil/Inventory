@@ -84,7 +84,7 @@ test.describe("navigation — unauthenticated redirects (FR-026 §1)", () => {
       create: { code: "E2E-NAV-COUNT", name: "E2E Nav Count Depot" },
     });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
-    const prep = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    const prep = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, admin.id);
     if (!prep.ok) throw new Error(prep.error);
 
     // Deliberately no login at all.
@@ -175,7 +175,10 @@ test.describe("navigation — LOGISTICS post-login redirect (FR-026 §4)", () =>
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
     const logisticsUser = await prisma.user.findUniqueOrThrow({ where: { email: logisticsEmail } });
 
-    const prep = await runPrepareSession(depotId, { id: admin.id, role: "ADMIN" });
+    // Assigned to the logistics user (US7) — findActiveSyncedSessionForLogistics
+    // (lib/sessions/resume.ts) now resolves from assignment, not from who
+    // physically synced it.
+    const prep = await runPrepareSession(depotId, { id: admin.id, role: "ADMIN" }, logisticsUser.id);
     if (!prep.ok) throw new Error(prep.error);
     const sync = await runSyncSession(
       prep.sessionId,
@@ -218,7 +221,7 @@ test.describe("navigation — resume banner (FR-026 reprise fix)", () => {
       create: { code: "E2E-RESUME-SYNCED", name: "E2E Resume Synced Depot" },
     });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
-    const prep = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    const prep = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, admin.id);
     if (!prep.ok) throw new Error(prep.error);
     syncedSessionId = prep.sessionId;
     const sync = await runSyncSession(syncedSessionId, { id: admin.id, role: "ADMIN" }, {
@@ -381,7 +384,7 @@ test.describe("navigation — resume without local cache re-bootstraps from the 
       create: { code: "E2E-RESUME-NOCACHE", name: "E2E Resume No Cache Depot" },
     });
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: "admin@example.com" } });
-    const prep = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" });
+    const prep = await runPrepareSession(depot.id, { id: admin.id, role: "ADMIN" }, admin.id);
     if (!prep.ok) throw new Error(prep.error);
     sessionId = prep.sessionId;
   });

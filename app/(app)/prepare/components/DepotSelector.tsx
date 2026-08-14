@@ -13,9 +13,24 @@ type Depot = {
   name: string;
 };
 
+type AssignableUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+};
+
 const initialState: PrepareSessionState = { error: null };
 
-export function DepotSelector({ depots, requiresFile }: { depots: Depot[]; requiresFile: boolean }) {
+export function DepotSelector({
+  depots,
+  assignableUsers,
+  requiresFile,
+}: {
+  depots: Depot[];
+  assignableUsers: AssignableUser[];
+  requiresFile: boolean;
+}) {
   const [state, formAction, isPending] = useActionState(prepareSession, initialState);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -66,6 +81,32 @@ export function DepotSelector({ depots, requiresFile }: { depots: Depot[]; requi
           Entrepôts et véhicules de techniciens (ex. « Véhicule (Franck) ») apparaissent tous ici, identifiés par
           leur code.
         </p>
+      </div>
+
+      {/* Not using the shared Field component either, for the same reason as
+          #depotId above — a stable id for e2e/tests. */}
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="assignedToId" className="text-base font-medium text-ink">
+          Attribuer à<span aria-hidden="true" className="text-danger-text"> *</span>
+        </label>
+        <select
+          id="assignedToId"
+          name="assignedToId"
+          required
+          disabled={isPending}
+          defaultValue=""
+          className="min-h-touch-min w-full rounded-control border-2 border-border bg-paper px-4 text-lg text-ink disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <option value="" disabled>
+            Sélectionner un utilisateur
+          </option>
+          {assignableUsers.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.name ?? user.email} — {user.role}
+            </option>
+          ))}
+        </select>
+        <p className="text-sm text-muted">La personne qui doit effectuer ce comptage — elle seule le verra dans « ses sessions ».</p>
       </div>
 
       {requiresFile && (

@@ -3,6 +3,7 @@ import { offlineDB, type OfflineSession, type OfflineSessionStatus } from "./db"
 type BootstrapLine = {
   articleRef: string;
   designation: string | null;
+  supplierRef: string | null;
   theoreticalQty: number;
 };
 
@@ -33,6 +34,7 @@ function toOfflineSession(data: BootstrapResponse): OfflineSession {
     theoreticalLines: data.lines.map((line) => ({
       articleRef: line.articleRef,
       designation: line.designation,
+      supplierRef: line.supplierRef,
       theoreticalQty: line.theoreticalQty,
     })),
     countLines: {},

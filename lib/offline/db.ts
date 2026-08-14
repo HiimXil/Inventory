@@ -5,6 +5,8 @@ export type OfflineSessionStatus = "PREPARED" | "SYNCED" | "CLOSED" | "CANCELLED
 export type OfflineTheoreticalLine = {
   articleRef: string;
   designation: string | null;
+  /** Optional: only real bootstrap data populates this (scan fallback, separate feature) — most fixtures/tests omit it. */
+  supplierRef?: string | null;
   theoreticalQty: number;
 };
 

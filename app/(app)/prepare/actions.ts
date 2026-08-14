@@ -18,6 +18,11 @@ export async function prepareSession(
     return { error: "Veuillez sélectionner un dépôt." };
   }
 
+  const assignedToId = formData.get("assignedToId");
+  if (typeof assignedToId !== "string" || assignedToId.length === 0) {
+    return { error: "Veuillez attribuer cette session à un utilisateur." };
+  }
+
   // A file upload is only required in ARTIS_MODE=file (production default).
   // Dev/test keep running against ArtisMockAdapter with no file at all —
   // enforced here server-side, not just by whether the UI shows the input.
@@ -44,6 +49,7 @@ export async function prepareSession(
       id: authSession.user.id,
       role: authSession.user.role,
     },
+    assignedToId,
     { fileBuffer },
   );
 

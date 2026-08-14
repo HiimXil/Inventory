@@ -3,6 +3,7 @@ import type { SessionStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { requirePermission } from "@/lib/auth/guards";
 import { isActiveUser, SESSION_EXPIRED_MESSAGE } from "@/lib/auth/verify-active-user";
+import { isAuthorized } from "@/lib/auth/roles";
 import type { UserRole } from "@/lib/auth/roles";
 import { getArtisAdapter } from "@/lib/artis/factory";
 import { aggregateTheoreticalStock } from "@/lib/artis/aggregate";
@@ -42,10 +43,18 @@ class DuplicateActiveSessionError extends Error {}
  * rather than a property to verify across a page-fetching loop. This still
  * flows through aggregateTheoreticalStock() unchanged: ArtisFileAdapter
  * always reports pageCount=1, so that loop naturally runs once.
+ *
+ * US7 (attribution model): `assignedToId` is who the count is FOR, required
+ * on every new session — distinct from `actor`, who only created it (a
+ * DEPOT_MANAGER routinely prepares on behalf of a LOGISTICS technician).
+ * Validated up front, before the ARTIS import, same reasoning as the
+ * ghost-actor check just below: no point wasting a file parse on a request
+ * that can't succeed.
  */
 export async function runPrepareSession(
   depotId: string,
   actor: PrepareSessionActor,
+  assignedToId: string,
   options: { timeoutMs?: number; fileBuffer?: Buffer | ArrayBuffer } = {},
 ): Promise<PrepareSessionOutcome> {
   // RBAC guard, server-side, first line of business logic (FR-027).
@@ -81,6 +90,19 @@ export async function runPrepareSession(
       },
     });
     return { ok: false, error: SESSION_EXPIRED_MESSAGE };
+  }
+
+  // US7: the assignee must be an active user actually able to count — same
+  // permission the bootstrap/count flow itself requires, checked here so a
+  // session can never be created pointing at someone who could never open
+  // it. Deliberately a distinct, actionable message: this is a valid
+  // request rejected on the *assignee*, not the ghost-actor case above.
+  const assignee = await prisma.user.findUnique({
+    where: { id: assignedToId },
+    select: { id: true, disabledAt: true, role: true },
+  });
+  if (!assignee || assignee.disabledAt || !isAuthorized(assignee.role, "COUNT")) {
+    return { ok: false, error: "L'utilisateur attribué est introuvable, désactivé ou ne peut pas compter." };
   }
 
   const depot = await prisma.depot.findUnique({ where: { id: depotId } });
@@ -133,6 +155,7 @@ export async function runPrepareSession(
           depotId,
           status: "PREPARED",
           preparedById: actor.id,
+          assignedToId,
           createdAt: capturedAt,
           theoreticalSnapshot: {
             capturedAt: capturedAt.toISOString(),
@@ -147,6 +170,7 @@ export async function runPrepareSession(
           sessionId: newSession.id,
           articleRef: item.articleRef,
           designation: item.designation,
+          supplierRef: item.supplierRef,
           theoreticalQty: item.qty,
           countedQty: null,
           isOffReferential: false,
@@ -161,6 +185,7 @@ export async function runPrepareSession(
             depotId,
             depotCode: depot.code,
             lineCount: parsed.data.items.length,
+            assignedToId,
           },
           sessionId: newSession.id,
         },
